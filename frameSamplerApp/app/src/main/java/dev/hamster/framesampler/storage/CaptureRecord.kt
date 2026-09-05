@@ -14,4 +14,8 @@ data class CaptureRecord(
     val timestampNs: Long,
     /** File extension for the configured output format, e.g. "jpg" or "png". */
     val extension: String = "jpg",
+    /** Box-downscale factor applied before encoding; 1 is full sensor resolution. */
+    val downscale: Int = 1,
+    val outputWidth: Int = 0,
+    val outputHeight: Int = 0,
 )

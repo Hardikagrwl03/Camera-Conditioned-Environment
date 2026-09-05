@@ -158,6 +158,17 @@ fun ConfigSheet(
                         accentColor = section.accent.color(),
                         onDraftChange = { draft = it },
                     )
+
+                    ConfigSection.DOWNSCALE -> {
+                        val full = if (draft.outputFormat == OutputFormat.PNG) caps.largestYuvSize else caps.largestJpegSize
+                        DownscaleEditor(
+                            draft = draft,
+                            accentColor = section.accent.color(),
+                            fullWidth = full.width,
+                            fullHeight = full.height,
+                            onDraftChange = { draft = it },
+                        )
+                    }
                 }
             }
 
@@ -236,6 +247,7 @@ private fun sectionImpact(section: ConfigSection, draft: SweepConfig): String = 
     ConfigSection.FORMAT -> draft.outputFormat.label
     ConfigSection.AVERAGE -> "× ${draft.framesToAverage} per configuration"
     ConfigSection.SETTLE -> "${draft.settleFrames} settle frames"
+    ConfigSection.DOWNSCALE -> if (draft.downscale == 1) "full resolution" else "${draft.downscale}x downscale"
 }
 
 /** A +/- stepper: bounded small integers are faster to set this way than through a keyboard. */

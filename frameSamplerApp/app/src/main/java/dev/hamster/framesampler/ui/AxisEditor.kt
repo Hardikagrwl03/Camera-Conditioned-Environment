@@ -20,6 +20,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.hamster.framesampler.camera.CameraCapabilities
 import dev.hamster.framesampler.model.AxisMode
@@ -38,6 +40,8 @@ import dev.hamster.framesampler.model.LinearListAxis
 import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
 import dev.hamster.framesampler.model.SweepDefaults
+import dev.hamster.framesampler.model.downscaleFactorsFor
+import dev.hamster.framesampler.model.nearestDownscaleFactor
 import kotlin.math.roundToInt
 
 /** Small, dim caption used for device limits and caveats. */
@@ -451,6 +455,84 @@ fun SettleEditor(draft: SweepConfig, accentColor: Color, onDraftChange: (SweepCo
             "With 0 the first frame after each change may still carry the previous settings.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+/** Downscale factor: a discrete 1x-10x slider, so the whole range is one gesture. */
+@Composable
+fun DownscaleEditor(
+    draft: SweepConfig,
+    accentColor: Color,
+    fullWidth: Int,
+    fullHeight: Int,
+    onDraftChange: (SweepConfig) -> Unit,
+) {
+    val factors = downscaleFactorsFor(fullWidth, fullHeight)
+    Text(
+        "${draft.downscale}x",
+        style = MaterialTheme.typography.displaySmall,
+        color = accentColor,
+        modifier = Modifier.fillMaxWidth(),
+        textAlign = TextAlign.Center,
+    )
+    // Switching output format can change the frame size and therefore which factors divide it
+    // evenly; snap the draft if the current one is no longer offered.
+    LaunchedEffect(factors, draft.downscale) {
+        if (draft.downscale !in factors) {
+            onDraftChange(draft.copy(downscale = nearestDownscaleFactor(draft.downscale, factors)))
+        }
+    }
+
+    // The slider indexes the offered factors rather than mapping 1..10 continuously, so a factor
+    // that would crop the frame simply has no position on the track.
+    val index = factors.indexOf(draft.downscale)
+        .let { if (it >= 0) it else factors.indexOf(nearestDownscaleFactor(draft.downscale, factors)) }
+    Slider(
+        value = index.toFloat(),
+        onValueChange = { pos ->
+            onDraftChange(draft.copy(downscale = factors[pos.roundToInt().coerceIn(factors.indices)]))
+        },
+        valueRange = 0f..(factors.size - 1).coerceAtLeast(1).toFloat(),
+        steps = (factors.size - 2).coerceAtLeast(0),
+        enabled = factors.size > 1,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Hint("${factors.first()}x")
+        Hint("${factors.last()}x")
+    }
+    Hint(
+        "Offered: ${factors.joinToString(", ") { "${it}x" }} — the factors that divide " +
+            "$fullWidth × $fullHeight exactly, so no pixels are cropped.",
+    )
+
+    val outW = if (draft.downscale <= 1) fullWidth else fullWidth / draft.downscale
+    val outH = if (draft.downscale <= 1) fullHeight else fullHeight / draft.downscale
+    val megapixels = outW.toLong() * outH / 1_000_000.0
+    Text(
+        if (draft.downscale == 1) {
+            "Saves at full resolution: $fullWidth × $fullHeight (${"%.1f".format(megapixels)} MP)"
+        } else {
+            "$fullWidth × $fullHeight → $outW × $outH (${"%.1f".format(megapixels)} MP)"
+        },
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Hint(
+        if (draft.downscale == 1) {
+            "Every sensor pixel is saved as captured."
+        } else {
+            "Each output pixel is the average of a ${draft.downscale}x${draft.downscale} block, which also " +
+                "lowers noise. Averaging is on gamma-encoded values, so it is not radiometrically linear."
+        },
+    )
+    if (draft.downscale > 1 && draft.outputFormat == OutputFormat.JPEG) {
+        Hint(
+            "At 1x a single JPEG frame is written straight from the camera; downscaling means it is " +
+                "decoded and re-encoded, costing one generation of compression.",
         )
     }
 }

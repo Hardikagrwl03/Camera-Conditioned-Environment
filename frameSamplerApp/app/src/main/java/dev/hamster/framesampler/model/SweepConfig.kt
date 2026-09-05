@@ -6,6 +6,25 @@ import kotlin.math.roundToLong
 
 enum class AxisMode { LIST, RANGE }
 
+/** Largest downscale factor considered, regardless of sensor dimensions. */
+const val MAX_DOWNSCALE_FACTOR = 10
+
+/**
+ * Downscale factors offered for a frame of [width] x [height]: only those that divide **both**
+ * dimensions exactly.
+ *
+ * A box downscale by a factor that does not divide evenly has to crop the remainder, discarding
+ * sensor rows or columns. Deriving the set from the actual frame size keeps that guarantee on any
+ * sensor rather than hard-coding what happens to work for one. 1 always qualifies, so the list is
+ * never empty.
+ */
+fun downscaleFactorsFor(width: Int, height: Int, max: Int = MAX_DOWNSCALE_FACTOR): List<Int> =
+    (1..max).filter { width % it == 0 && height % it == 0 }.ifEmpty { listOf(1) }
+
+/** Snaps an arbitrary factor to the nearest offered one, so stored values can never be off-list. */
+fun nearestDownscaleFactor(value: Int, factors: List<Int>): Int =
+    factors.minByOrNull { kotlin.math.abs(it - value) } ?: 1
+
 /**
  * n values from [start] to [end] inclusive, each a constant ratio apart.
  * Requires start > 0 and end > 0. n <= 1 returns [start].
@@ -43,6 +62,8 @@ data class SweepConfig(
     val framesToAverage: Int = 1,
     val settleFrames: Int = 2,
     val outputFormat: OutputFormat = OutputFormat.JPEG,
+    /** Integer box-downscale factor applied before encoding; 1 saves at full sensor resolution. */
+    val downscale: Int = 1,
 ) {
     val isoValues: List<Int> get() = iso.values().map { it.roundToInt() }.distinct().sorted()
     val exposureValuesNs: List<Long> get() = exposure.values().map { it.roundToLong() }.distinct().sorted()

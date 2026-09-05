@@ -43,6 +43,7 @@ fun sectionValue(section: ConfigSection, config: SweepConfig): String = when (se
     ConfigSection.FORMAT -> config.outputFormat.label
     ConfigSection.AVERAGE -> "${config.framesToAverage}"
     ConfigSection.SETTLE -> "${config.settleFrames}"
+    ConfigSection.DOWNSCALE -> "${config.downscale}x"
 }
 
 /** The longer description a popup header shows next to its title. */
@@ -53,6 +54,7 @@ fun sectionDetail(section: ConfigSection, config: SweepConfig): String = when (s
     ConfigSection.FORMAT -> config.outputFormat.label
     ConfigSection.AVERAGE -> if (config.framesToAverage == 1) "single frame" else "${config.framesToAverage} frames averaged"
     ConfigSection.SETTLE -> "${config.settleFrames} warm-up frames"
+    ConfigSection.DOWNSCALE -> if (config.downscale == 1) "full resolution" else "${config.downscale}x smaller"
 }
 
 /** Resolved value count for the three sweep axes; the scalar settings have none. */
@@ -89,7 +91,9 @@ fun estimatedDuration(config: SweepConfig): String {
 /** Rough on-disk size of a whole sweep, in MB, at the configured format. */
 fun estimatedSweepMb(config: SweepConfig): Long {
     val perFrameMb = if (config.outputFormat == OutputFormat.PNG) 30L else 5L
-    return config.totalCaptures * perFrameMb
+    // Downscaling by f shrinks the pixel count by f^2, and file size roughly with it.
+    val scaled = perFrameMb.toDouble() / (config.downscale.toDouble() * config.downscale)
+    return (config.totalCaptures * scaled).toLong().coerceAtLeast(1L)
 }
 
 /** Free space on the volume the sweeps are written to, read once per composition. */

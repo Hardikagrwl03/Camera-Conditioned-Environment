@@ -84,6 +84,7 @@ class SweepStorage {
                 put("exposureValuesNs", JSONArray(config.exposureValuesNs))
                 put("focusValuesDiopters", JSONArray(config.focusValues.map { it.toDouble() }))
                 put("outputFormat", config.outputFormat.label)
+                put("downscale", config.downscale)
                 put("framesToAverage", config.framesToAverage)
                 put("settleFrames", config.settleFrames)
                 put("totalCaptures", config.totalCaptures)
@@ -107,6 +108,8 @@ class SweepStorage {
         put("requestedFocusDiopters", r.requestedFocusDiopters.toDouble())
         put("actualFocusDiopters", r.actualFocusDiopters?.toDouble() ?: JSONObject.NULL)
         put("framesAveraged", r.framesAveraged)
+        put("downscale", r.downscale)
+        put("outputSize", "${r.outputWidth}x${r.outputHeight}")
         put("settled", r.settled)
         put("timestampNs", r.timestampNs)
     }
@@ -114,7 +117,8 @@ class SweepStorage {
     private fun writeCsv(sessionDir: File, records: List<CaptureRecord>) {
         val sb = StringBuilder()
         sb.append("index,filename,requestedIso,actualIso,requestedExposureNs,actualExposureNs,")
-            .append("requestedFocusDiopters,actualFocusDiopters,framesAveraged,settled,timestampNs\n")
+            .append("requestedFocusDiopters,actualFocusDiopters,framesAveraged,downscale,")
+            .append("outputWidth,outputHeight,settled,timestampNs\n")
         records.forEach { r ->
             sb.append(r.index).append(',')
                 .append(filenameFor(r)).append(',')
@@ -125,6 +129,9 @@ class SweepStorage {
                 .append(r.requestedFocusDiopters).append(',')
                 .append(r.actualFocusDiopters ?: "").append(',')
                 .append(r.framesAveraged).append(',')
+                .append(r.downscale).append(',')
+                .append(r.outputWidth).append(',')
+                .append(r.outputHeight).append(',')
                 .append(r.settled).append(',')
                 .append(r.timestampNs).append('\n')
         }
@@ -137,14 +144,15 @@ class SweepStorage {
     }
 
     companion object {
-        /** iso<ISO>_exp<EXPOSURE_US>us_fd<FOCUS_DIOPTERS>D_avg<N>_<INDEX>.<ext> */
+        /** iso<ISO>_exp<EXPOSURE_US>us_fd<FOCUS_DIOPTERS>D_avg<N>_ds<FACTOR>_<INDEX>.<ext> */
         fun filenameFor(record: CaptureRecord): String {
             val isoStr = record.requestedIso.toString().padStart(4, '0')
             val expUs = record.requestedExposureNs / 1000
             val expStr = expUs.toString().padStart(6, '0')
             val fdStr = String.format(Locale.US, "%.2f", record.requestedFocusDiopters).replace('.', 'p')
             val idxStr = record.index.toString().padStart(4, '0')
-            return "iso${isoStr}_exp${expStr}us_fd${fdStr}D_avg${record.framesAveraged}_$idxStr.${record.extension}"
+            return "iso${isoStr}_exp${expStr}us_fd${fdStr}D_avg${record.framesAveraged}" +
+                "_ds${record.downscale}_$idxStr.${record.extension}"
         }
     }
 }

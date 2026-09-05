@@ -389,11 +389,13 @@ class CameraController(private val cameraManager: CameraManager) {
                             }
                         }
 
-                        val outputBytes = if (avg != null) {
-                            encodePixels(avg.averagedPixels(), frameSize.width, frameSize.height, config.outputFormat)
-                        } else {
-                            encodeSingle(singleFrame!!, config.outputFormat)
-                        }
+                        val outputBytes = encodeOutput(
+                            avg = avg,
+                            singleFrame = singleFrame,
+                            fullSize = frameSize,
+                            format = config.outputFormat,
+                            downscale = config.downscale,
+                        )
                         val manual = lastManual!!
                         val result = firstResult!!
                         val record = CaptureRecord(
@@ -406,6 +408,9 @@ class CameraController(private val cameraManager: CameraManager) {
                             actualFocusDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE),
                             framesAveraged = config.framesToAverage,
                             extension = config.outputFormat.extension,
+                            downscale = config.downscale,
+                            outputWidth = downscaledSize(frameSize.width, frameSize.height, config.downscale).first,
+                            outputHeight = downscaledSize(frameSize.width, frameSize.height, config.downscale).second,
                             settled = settled,
                             timestampNs = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: System.nanoTime(),
                         )
@@ -449,6 +454,47 @@ class CameraController(private val cameraManager: CameraManager) {
         caps = null
         previewSurface = null
         pendingImage = null
+    }
+
+    /**
+     * Produces the bytes written to disk: average if asked, downscale if asked, then encode.
+     *
+     * The one path that avoids decoding entirely is a single JPEG frame destined for a JPEG file
+     * at full resolution — re-encoding that would only add a generation of compression loss.
+     * Downscaling necessarily gives that up, since the pixels have to be touched.
+     */
+    private fun encodeOutput(
+        avg: FrameAverager?,
+        singleFrame: CapturedFrame?,
+        fullSize: android.util.Size,
+        format: OutputFormat,
+        downscale: Int,
+    ): ByteArray {
+        if (avg != null) {
+            val averaged = boxDownscale(avg.averagedPixels(), fullSize.width, fullSize.height, downscale)
+            return encodePixels(averaged.pixels, averaged.width, averaged.height, format)
+        }
+        val frame = singleFrame!!
+        if (downscale <= 1) return encodeSingle(frame, format)
+        val full = framePixels(frame)
+        val scaled = boxDownscale(full.pixels, full.width, full.height, downscale)
+        return encodePixels(scaled.pixels, scaled.width, scaled.height, format)
+    }
+
+    /** A captured frame as pixels, decoding a JPEG only when that is the form it arrived in. */
+    private fun framePixels(frame: CapturedFrame): PixelFrame = when (frame) {
+        is CapturedFrame.Pixels -> PixelFrame(frame.pixels, frame.width, frame.height)
+        is CapturedFrame.Jpeg -> {
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(frame.bytes, 0, frame.bytes.size)
+                ?: error("Failed to decode captured JPEG")
+            try {
+                val px = IntArray(bmp.width * bmp.height)
+                bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+                PixelFrame(px, bmp.width, bmp.height)
+            } finally {
+                bmp.recycle()
+            }
+        }
     }
 
     /** Decodes to ARGB pixels only when needed — averaging always works in pixel space. */
