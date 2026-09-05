@@ -44,6 +44,7 @@ enum class ConfigSection(
     FORMAT("Output format", "Format", "How each captured frame is encoded on disk.", Accent.FORMAT),
     AVERAGE("Frames to average", "Average", "Frames captured per configuration and averaged.", Accent.AVERAGE),
     SETTLE("Settle frames", "Settle", "Warm-up frames discarded after each settings change.", Accent.SETTLE),
+    DOWNSCALE("Downscale", "Scale", "Shrinks each saved frame by averaging blocks of pixels.", Accent.DOWNSCALE),
 }
 
 sealed interface UiState {

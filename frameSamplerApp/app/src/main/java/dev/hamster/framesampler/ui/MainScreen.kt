@@ -197,8 +197,9 @@ private fun WarningBanner(warning: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * The six sweep attributes as small tabs. A 3x2 grid: the control area is only ~300dp tall once
- * the 3:4 preview has taken its height, so six full-width rows would not fit.
+ * The seven sweep attributes as small tabs: the three sweep axes on the first row, the four
+ * per-frame settings on the second. Two rows rather than a uniform grid because the control area
+ * is only ~300dp tall once the 3:4 preview has taken its height.
  */
 @Composable
 private fun AttributeTabs(
@@ -206,7 +207,7 @@ private fun AttributeTabs(
     onSectionClick: (ConfigSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rows = ConfigSection.entries.chunked(3)
+    val rows = listOf(ConfigSection.entries.take(3), ConfigSection.entries.drop(3))
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         rows.forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -242,7 +243,7 @@ private fun AttributeTab(
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
                 .animateContentSize(),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

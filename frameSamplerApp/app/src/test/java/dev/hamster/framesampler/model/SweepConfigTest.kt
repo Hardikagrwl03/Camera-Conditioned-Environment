@@ -53,4 +53,31 @@ class SweepConfigTest {
         val axis = GeometricAxis(mode = AxisMode.LIST, list = listOf(400.0, 100.0, 400.0, 200.0))
         assertEquals(listOf(100.0, 200.0, 400.0), axis.values())
     }
+
+    @Test
+    fun downscaleFactors_onThisSensor_areOnlyTheExactDivisors() {
+        // 4080 x 3060: 7, 8 and 9 each leave a remainder on one dimension.
+        assertEquals(listOf(1, 2, 3, 4, 5, 6, 10), downscaleFactorsFor(4080, 3060))
+    }
+
+    @Test
+    fun downscaleFactors_differForADifferentSensor() {
+        // 4032 x 3024 (a common alternative) shares fewer divisors.
+        assertEquals(listOf(1, 2, 3, 4, 6, 7, 8, 9), downscaleFactorsFor(4032, 3024))
+    }
+
+    @Test
+    fun downscaleFactors_neverEmpty_andAlwaysIncludeOne() {
+        val prime = downscaleFactorsFor(4099, 3061)
+        assertEquals(listOf(1), prime)
+    }
+
+    @Test
+    fun nearestDownscaleFactor_snapsRemovedValues() {
+        val factors = downscaleFactorsFor(4080, 3060)
+        assertEquals(6, nearestDownscaleFactor(7, factors))
+        assertEquals(6, nearestDownscaleFactor(8, factors))
+        assertEquals(10, nearestDownscaleFactor(9, factors))
+        assertEquals(4, nearestDownscaleFactor(4, factors))
+    }
 }

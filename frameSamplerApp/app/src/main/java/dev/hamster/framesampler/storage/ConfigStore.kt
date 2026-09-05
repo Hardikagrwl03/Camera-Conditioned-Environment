@@ -6,6 +6,8 @@ import dev.hamster.framesampler.camera.CameraCapabilities
 import dev.hamster.framesampler.model.AxisMode
 import dev.hamster.framesampler.model.GeometricAxis
 import dev.hamster.framesampler.model.LinearListAxis
+import dev.hamster.framesampler.model.downscaleFactorsFor
+import dev.hamster.framesampler.model.nearestDownscaleFactor
 import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
 import org.json.JSONArray
@@ -42,6 +44,7 @@ class ConfigStore(context: Context) {
             put("framesToAverage", config.framesToAverage)
             put("settleFrames", config.settleFrames)
             put("outputFormat", config.outputFormat.name)
+            put("downscale", config.downscale)
         }
         prefs.edit().putString(KEY_CONFIG, json.toString()).apply()
     }
@@ -54,15 +57,21 @@ class ConfigStore(context: Context) {
             if (json.optInt("version") != SCHEMA_VERSION) return null
             if (json.optString("camera") != fingerprint(caps)) return null
 
+            val format = OutputFormat.entries
+                .firstOrNull { it.name == json.optString("outputFormat") }
+                ?: OutputFormat.JPEG
+            // The valid factors depend on the frame size the stored format will produce.
+            val frame = if (format == OutputFormat.PNG) caps.largestYuvSize else caps.largestJpegSize
+            val factors = downscaleFactorsFor(frame.width, frame.height)
+
             SweepConfig(
                 iso = axisFromJson(json.getJSONObject("iso")),
                 exposure = axisFromJson(json.getJSONObject("exposure")),
                 focus = LinearListAxis(doubleList(json.getJSONArray("focus"))),
                 framesToAverage = json.getInt("framesToAverage").coerceIn(1, 64),
                 settleFrames = json.getInt("settleFrames").coerceIn(0, 10),
-                outputFormat = OutputFormat.entries
-                    .firstOrNull { it.name == json.optString("outputFormat") }
-                    ?: OutputFormat.JPEG,
+                outputFormat = format,
+                downscale = nearestDownscaleFactor(json.optInt("downscale", 1), factors),
             ).takeIf { it.totalCaptures > 0 }
         } catch (e: Exception) {
             Log.w(TAG, "Stored configuration unreadable, falling back to defaults", e)
