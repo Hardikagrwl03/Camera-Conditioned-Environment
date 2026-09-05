@@ -42,6 +42,7 @@ data class SweepConfig(
     val focus: LinearListAxis,
     val framesToAverage: Int = 1,
     val settleFrames: Int = 2,
+    val outputFormat: OutputFormat = OutputFormat.JPEG,
 ) {
     val isoValues: List<Int> get() = iso.values().map { it.roundToInt() }.distinct().sorted()
     val exposureValuesNs: List<Long> get() = exposure.values().map { it.roundToLong() }.distinct().sorted()

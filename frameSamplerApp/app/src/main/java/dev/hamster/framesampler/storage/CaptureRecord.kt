@@ -12,4 +12,6 @@ data class CaptureRecord(
     val framesAveraged: Int,
     val settled: Boolean,
     val timestampNs: Long,
+    /** File extension for the configured output format, e.g. "jpg" or "png". */
+    val extension: String = "jpg",
 )

@@ -5,7 +5,11 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import dev.hamster.framesampler.ui.MainScreen
 import dev.hamster.framesampler.ui.PermissionGate
 import dev.hamster.framesampler.ui.theme.FrameSamplerTheme
@@ -17,7 +21,12 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             FrameSamplerTheme {
-                FrameSamplerApp()
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    FrameSamplerApp()
+                }
             }
         }
     }

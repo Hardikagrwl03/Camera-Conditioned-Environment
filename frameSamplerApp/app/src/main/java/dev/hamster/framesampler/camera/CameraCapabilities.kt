@@ -23,8 +23,26 @@ data class CameraCapabilities(
     val hardwareLevel: Int,
     val activeArraySize: Rect,
     val largestJpegSize: Size,
+    val largestYuvSize: Size,
     val previewSize: Size,
+    val sensorOrientation: Int,
 )
+
+/**
+ * Aspect ratio (width / height) the preview occupies **on screen**, as opposed to in sensor
+ * coordinates. Camera2 reports sizes in sensor coordinates, which are landscape on a sensor
+ * mounted at 90 or 270 degrees, so the ratio must be inverted for a portrait display.
+ *
+ * The activity is locked to portrait, so display rotation is always 0 here. If portrait lock is
+ * ever removed, use the full relative rotation instead:
+ *   (sensorOrientation - displayRotationDegrees + 360) % 360
+ */
+val CameraCapabilities.previewDisplayAspect: Float
+    get() {
+        val w = previewSize.width.toFloat()
+        val h = previewSize.height.toFloat()
+        return if (sensorOrientation == 90 || sensorOrientation == 270) h / w else w / h
+    }
 
 private const val TAG = "CameraCapabilities"
 
@@ -59,12 +77,14 @@ object CameraCapabilitiesReader {
         val hardwareLevel = chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
             ?: CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY
         val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: Rect()
+        val sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
 
         val supportsManualSensor = hasCapability(chars, CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
         val supportsManualPost = hasCapability(chars, CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)
         val supportsRaw = hasCapability(chars, CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW)
 
         val largestJpeg = largestSize(map.getOutputSizes(ImageFormat.JPEG))
+        val largestYuv = largestSize(map.getOutputSizes(ImageFormat.YUV_420_888))
         val previewSize = pickPreviewSize(map, largestJpeg)
 
         val caps = CameraCapabilities(
@@ -80,7 +100,9 @@ object CameraCapabilitiesReader {
             hardwareLevel = hardwareLevel,
             activeArraySize = activeArray,
             largestJpegSize = largestJpeg,
+            largestYuvSize = largestYuv,
             previewSize = previewSize,
+            sensorOrientation = sensorOrientation,
         )
         Log.i(TAG, "Camera $cameraId capabilities: $caps")
         return caps

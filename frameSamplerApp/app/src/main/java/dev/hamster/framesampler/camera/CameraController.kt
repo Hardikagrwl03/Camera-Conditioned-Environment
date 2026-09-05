@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
+import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
 import dev.hamster.framesampler.storage.CaptureRecord
 import kotlinx.coroutines.CompletableDeferred
@@ -38,6 +39,12 @@ data class SweepProgress(
     val unsettledCount: Int,
 )
 
+/** One frame off the camera: either an encoded JPEG, or decoded pixels from an uncompressed capture. */
+sealed interface CapturedFrame {
+    class Jpeg(val bytes: ByteArray) : CapturedFrame
+    class Pixels(val pixels: IntArray, val width: Int, val height: Int) : CapturedFrame
+}
+
 class CameraOpenException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
@@ -57,12 +64,13 @@ class CameraController(private val cameraManager: CameraManager) {
 
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
-    private var jpegReader: ImageReader? = null
+    private var stillReader: ImageReader? = null
+    private var readerFormat: Int = ImageFormat.JPEG
     private var previewSurface: Surface? = null
-    private var averager: JpegAverager? = null
+    private var averager: FrameAverager? = null
 
     @Volatile
-    private var pendingImage: kotlinx.coroutines.CompletableDeferred<ByteArray>? = null
+    private var pendingImage: kotlinx.coroutines.CompletableDeferred<CapturedFrame>? = null
 
     suspend fun open(cameraId: String): CameraCapabilities {
         val resolvedCaps = CameraCapabilitiesReader.read(cameraManager, cameraId)
@@ -94,19 +102,44 @@ class CameraController(private val cameraManager: CameraManager) {
         }
     }
 
-    /** Creates the capture session (preview + JPEG outputs) and starts the automatic preview stream. */
+    /** Creates the capture session (preview + still output) and starts the automatic preview stream. */
     suspend fun startPreview(surface: Surface) {
+        previewSurface = surface
+        buildSession(readerFormat)
+        startAutoPreviewRepeating()
+    }
+
+    /**
+     * The still ImageReader's format is fixed when the capture session is configured, so switching
+     * output format means tearing the session down and building a new one. Called before a sweep.
+     */
+    suspend fun ensureOutputFormat(format: OutputFormat) {
+        if (format.readerFormat == readerFormat && session != null && stillReader != null) return
+        Log.i(TAG, "Rebuilding capture session for ${format.label} (reader format ${format.readerFormat})")
+        try {
+            session?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "closing session before format switch failed", e)
+        }
+        session = null
+        buildSession(format.readerFormat)
+    }
+
+    private suspend fun buildSession(format: Int) {
         val dev = device ?: error("Camera not open")
         val c = caps ?: error("Capabilities not loaded")
-        previewSurface = surface
+        val surface = previewSurface ?: error("Preview surface not set")
 
-        jpegReader?.close()
-        val reader = ImageReader.newInstance(c.largestJpegSize.width, c.largestJpegSize.height, ImageFormat.JPEG, 4)
+        stillReader?.close()
+        val size = if (format == ImageFormat.JPEG) c.largestJpegSize else c.largestYuvSize
+        // YUV frames are far larger in memory than encoded JPEGs, so keep fewer in flight.
+        val maxImages = if (format == ImageFormat.JPEG) 4 else 2
+        val reader = ImageReader.newInstance(size.width, size.height, format, maxImages)
         reader.setOnImageAvailableListener({ r -> onImageAvailable(r) }, imageHandler)
-        jpegReader = reader
+        stillReader = reader
+        readerFormat = format
 
         session = createSession(dev, listOf(surface, reader.surface))
-        startAutoPreviewRepeating()
     }
 
     private fun onImageAvailable(reader: ImageReader) {
@@ -117,12 +150,17 @@ class CameraController(private val cameraManager: CameraManager) {
             null
         } ?: return
         try {
-            val buffer = image.planes[0].buffer
-            val bytes = ByteArray(buffer.remaining())
-            buffer.get(bytes)
+            val frame = if (image.format == ImageFormat.JPEG) {
+                val buffer = image.planes[0].buffer
+                val bytes = ByteArray(buffer.remaining())
+                buffer.get(bytes)
+                CapturedFrame.Jpeg(bytes)
+            } else {
+                CapturedFrame.Pixels(yuv420ToArgb(image), image.width, image.height)
+            }
             val deferred = pendingImage
             if (deferred != null && !deferred.isCompleted) {
-                deferred.complete(bytes)
+                deferred.complete(frame)
             }
         } finally {
             image.close()
@@ -246,13 +284,13 @@ class CameraController(private val cameraManager: CameraManager) {
         }
     }
 
-    private suspend fun captureJpegFrame(request: CaptureRequest): Pair<TotalCaptureResult, ByteArray> {
-        val deferred = CompletableDeferred<ByteArray>()
+    private suspend fun captureFrame(request: CaptureRequest): Pair<TotalCaptureResult, CapturedFrame> {
+        val deferred = CompletableDeferred<CapturedFrame>()
         pendingImage = deferred
         val result = captureOne(request)
-        val bytes = deferred.await()
+        val frame = deferred.await()
         pendingImage = null
-        return result to bytes
+        return result to frame
     }
 
     private fun checkSettled(result: TotalCaptureResult, iso: Int, exposureNs: Long, focus: Float): Boolean {
@@ -300,15 +338,18 @@ class CameraController(private val cameraManager: CameraManager) {
         onCaptureWritten: suspend (CaptureRecord, ByteArray) -> Unit,
     ): List<CaptureRecord> {
         val c = caps ?: error("Capabilities not loaded")
-        val reader = jpegReader ?: error("JPEG reader not initialized")
+        // Switching output format rebuilds the session, so do it before grabbing references.
+        ensureOutputFormat(config.outputFormat)
+        val reader = stillReader ?: error("Still reader not initialized")
         val s = session ?: error("No active session")
 
         val records = mutableListOf<CaptureRecord>()
         var unsettledCount = 0
         val total = config.totalCaptures
 
+        val frameSize = if (config.outputFormat == OutputFormat.JPEG) c.largestJpegSize else c.largestYuvSize
         if (config.framesToAverage > 1) {
-            averager = JpegAverager(c.largestJpegSize.width, c.largestJpegSize.height)
+            averager = FrameAverager(frameSize.width, frameSize.height)
         }
 
         try {
@@ -331,7 +372,7 @@ class CameraController(private val cameraManager: CameraManager) {
                         val avg = averager
                         avg?.reset()
                         var firstResult: TotalCaptureResult? = null
-                        var singleFrameBytes: ByteArray? = null
+                        var singleFrame: CapturedFrame? = null
                         var lastManual: ManualCapture? = null
 
                         for (frame in 0 until config.framesToAverage) {
@@ -339,16 +380,20 @@ class CameraController(private val cameraManager: CameraManager) {
                                 listOf(reader.surface), iso, exposureNs, focus, forStillCapture = true,
                             )
                             lastManual = manual
-                            val (result, bytes) = captureJpegFrame(manual.request)
+                            val (result, captured) = captureFrame(manual.request)
                             if (firstResult == null) firstResult = result
                             if (avg != null) {
-                                avg.add(bytes)
+                                avg.add(pixelsOf(captured))
                             } else {
-                                singleFrameBytes = bytes
+                                singleFrame = captured
                             }
                         }
 
-                        val outputBytes = avg?.resultJpegBytes() ?: singleFrameBytes!!
+                        val outputBytes = if (avg != null) {
+                            encodePixels(avg.averagedPixels(), frameSize.width, frameSize.height, config.outputFormat)
+                        } else {
+                            encodeSingle(singleFrame!!, config.outputFormat)
+                        }
                         val manual = lastManual!!
                         val result = firstResult!!
                         val record = CaptureRecord(
@@ -360,6 +405,7 @@ class CameraController(private val cameraManager: CameraManager) {
                             requestedFocusDiopters = focus,
                             actualFocusDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE),
                             framesAveraged = config.framesToAverage,
+                            extension = config.outputFormat.extension,
                             settled = settled,
                             timestampNs = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: System.nanoTime(),
                         )
@@ -392,8 +438,8 @@ class CameraController(private val cameraManager: CameraManager) {
             Log.w(TAG, "session close failed", e)
         }
         session = null
-        jpegReader?.close()
-        jpegReader = null
+        stillReader?.close()
+        stillReader = null
         try {
             device?.close()
         } catch (e: Exception) {
@@ -403,6 +449,43 @@ class CameraController(private val cameraManager: CameraManager) {
         caps = null
         previewSurface = null
         pendingImage = null
+    }
+
+    /** Decodes to ARGB pixels only when needed — averaging always works in pixel space. */
+    private fun pixelsOf(frame: CapturedFrame): IntArray = when (frame) {
+        is CapturedFrame.Pixels -> frame.pixels
+        is CapturedFrame.Jpeg -> {
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(frame.bytes, 0, frame.bytes.size)
+                ?: error("Failed to decode captured JPEG for averaging")
+            try {
+                IntArray(bmp.width * bmp.height).also {
+                    bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+                }
+            } finally {
+                bmp.recycle()
+            }
+        }
+    }
+
+    /**
+     * A single JPEG frame destined for a JPEG file is written through untouched — decoding and
+     * re-encoding it would only add a generation of compression loss.
+     */
+    private fun encodeSingle(frame: CapturedFrame, format: OutputFormat): ByteArray = when {
+        frame is CapturedFrame.Jpeg && format == OutputFormat.JPEG -> frame.bytes
+        frame is CapturedFrame.Pixels -> encodePixels(frame.pixels, frame.width, frame.height, format)
+        frame is CapturedFrame.Jpeg -> {
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(frame.bytes, 0, frame.bytes.size)
+                ?: error("Failed to decode captured JPEG")
+            try {
+                val px = IntArray(bmp.width * bmp.height)
+                bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+                encodePixels(px, bmp.width, bmp.height, format)
+            } finally {
+                bmp.recycle()
+            }
+        }
+        else -> error("Unreachable")
     }
 
     fun shutdown() {
