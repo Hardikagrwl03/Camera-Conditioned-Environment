@@ -1,26 +1,35 @@
 package dev.hamster.framesampler.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,259 +37,234 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import dev.hamster.framesampler.camera.CameraCapabilities
-import dev.hamster.framesampler.model.LinearListAxis
+import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
 import dev.hamster.framesampler.model.SweepDefaults
 import kotlin.math.roundToInt
 
+/**
+ * Editing popup for one [ConfigSection], covering only the lower part of the screen so the preview
+ * stays visible above it.
+ *
+ * The draft starts as a copy of the live config and only this section's field is touched, so
+ * applying one section can never clobber another.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConfigureSheet(
+fun ConfigSheet(
+    section: ConfigSection,
     initialConfig: SweepConfig,
     caps: CameraCapabilities,
     onApply: (SweepConfig) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var draft by remember { mutableStateOf(initialConfig) }
-    // Bumped whenever draft is replaced wholesale (Reset to defaults, Generate N evenly spaced)
-    // so the text fields below re-seed their local editing buffers from the new values.
-    var resetVersion by remember { mutableStateOf(0) }
+    // Keyed on section so opening a different tab starts from the live config, not a stale draft.
+    var draft by remember(section) { mutableStateOf(initialConfig) }
+    var resetVersion by remember(section) { mutableStateOf(0) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    Dialog(
+    ModalBottomSheet(
         onDismissRequest = onCancel,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        // The sheet must not consume IME insets itself — the content column does, via imePadding.
+        // Doing exactly one of the two leaves the inputs hidden behind the keyboard.
+        contentWindowInsets = { WindowInsets(0) },
     ) {
-        Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            SheetHeader(section, draft)
+
+            // The scrollable body yields height to the keyboard so the footer's Apply/Cancel
+            // never get clipped: a fixed cap leaves the footer off-screen once the IME is up.
+            val density = LocalDensity.current
+            val imeDp = with(density) { WindowInsets.ime.getBottom(density).toDp() }
+            val screenDp = LocalConfiguration.current.screenHeightDp.dp
+            val chromeDp = 230.dp // header + footer + handle + paddings
+            val bodyMax = (screenDp - imeDp - chromeDp).coerceAtLeast(140.dp)
+
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.systemBars),
+                    .heightIn(max = bodyMax)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onCancel) { Text("Cancel") }
-                    Text("Configure sweep", style = MaterialTheme.typography.titleLarge)
-                    Button(
-                        onClick = { onApply(draft) },
-                        enabled = draft.totalCaptures > 0,
-                    ) { Text("Apply") }
-                }
-                HorizontalDivider()
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp),
-                ) {
-                    GeometricAxisEditor(
-                        title = "ISO (sensitivity)",
+                when (section) {
+                    ConfigSection.ISO -> GeometricAxisEditor(
                         axis = draft.iso,
                         unitLabel = "ISO",
-                        deviceRangeHint = "Device supports ${caps.sensitivityRange.lower} – ${caps.sensitivityRange.upper}",
+                        supportedHint = "Camera supports ${caps.sensitivityRange.lower} – ${caps.sensitivityRange.upper}",
+                        accentColor = section.accent.color(),
                         resetKey = resetVersion,
+                        presets = isoPresets(caps),
                         onAxisChange = { draft = draft.copy(iso = it) },
+                        onPreset = { draft = draft.copy(iso = it); resetVersion++ },
                         formatValue = { it.roundToInt().toString() },
+                        chipLabel = { it.roundToInt().toString() },
                     )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                    GeometricAxisEditor(
-                        title = "Exposure time",
+                    ConfigSection.SHUTTER -> GeometricAxisEditor(
                         axis = draft.exposure,
                         unitLabel = "ms",
-                        deviceRangeHint = "Device supports ${nsToMs(caps.exposureTimeRangeNs.lower)} – ${nsToMs(caps.exposureTimeRangeNs.upper)} ms",
+                        supportedHint = "Camera supports ${trim(caps.exposureTimeRangeNs.lower / 1e6)} – " +
+                            "${trim(caps.exposureTimeRangeNs.upper / 1e6)} ms",
+                        accentColor = section.accent.color(),
                         resetKey = resetVersion,
+                        presets = shutterPresets(caps),
                         onAxisChange = { draft = draft.copy(exposure = it) },
-                        formatValue = { "%.3f".format(it / 1_000_000.0) },
+                        onPreset = { draft = draft.copy(exposure = it); resetVersion++ },
+                        formatValue = { trim(it / 1e6) },
+                        chipLabel = { shutterLabel(it.toLong()) },
                     )
-                    val exposureBudgetSec = draft.exposureValuesNs.sum() / 1_000_000_000.0
-                    Text(
-                        "Exposure budget for this axis: ${"%.1f".format(exposureBudgetSec)} s summed across all values",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                    FocusAxisEditor(
+                    ConfigSection.FOCUS -> FocusAxisEditor(
                         caps = caps,
                         focus = draft.focus,
+                        accentColor = section.accent.color(),
                         resetKey = resetVersion,
                         onFocusChange = { draft = draft.copy(focus = it) },
                         onFocusGenerated = { draft = draft.copy(focus = it); resetVersion++ },
                     )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                    GlobalSettingsSection(
+                    ConfigSection.FORMAT -> FormatEditor(
                         draft = draft,
-                        resetKey = resetVersion,
+                        accentColor = section.accent.color(),
+                        freeBytes = rememberFreeBytes(),
                         onDraftChange = { draft = it },
-                        onResetDefaults = { draft = SweepDefaults.forCamera(caps); resetVersion++ },
+                    )
+
+                    ConfigSection.AVERAGE -> AverageEditor(
+                        draft = draft,
+                        accentColor = section.accent.color(),
+                        onDraftChange = { draft = it },
+                    )
+
+                    ConfigSection.SETTLE -> SettleEditor(
+                        draft = draft,
+                        accentColor = section.accent.color(),
+                        onDraftChange = { draft = it },
                     )
                 }
-
-                HorizontalDivider()
-                SweepSummaryFooter(draft)
-            }
-        }
-    }
-}
-
-@Composable
-private fun FocusAxisEditor(
-    caps: CameraCapabilities,
-    focus: LinearListAxis,
-    resetKey: Any,
-    onFocusChange: (LinearListAxis) -> Unit,
-    onFocusGenerated: (LinearListAxis) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text("Focal distance", style = MaterialTheme.typography.titleMedium)
-        if (caps.minFocusDistanceDiopters <= 0f) {
-            Text(
-                "This camera has a fixed-focus lens.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        } else {
-            Text(
-                "Values in diopters (1/metres). 0.00 D = infinity, ${"%.2f".format(caps.minFocusDistanceDiopters)} D = closest focus.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-
-            var field by remember(resetKey) {
-                val initial = focus.list.joinToString(", ") { "%.2f".format(it) }
-                mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
-            }
-            OutlinedTextField(
-                value = field,
-                onValueChange = { newValue ->
-                    field = newValue
-                    val parsed = newValue.text.split(",")
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .mapNotNull { it.toDoubleOrNull() }
-                    onFocusChange(LinearListAxis(parsed))
-                },
-                label = { Text("Values, comma separated (diopters)") },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Text),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            var genCountField by remember(resetKey) {
-                mutableStateOf(TextFieldValue("10", selection = TextRange(2)))
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = genCountField,
-                    onValueChange = { genCountField = it },
-                    label = { Text("N") },
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.width(80.dp),
-                )
-                OutlinedButton(onClick = {
-                    val n = genCountField.text.toIntOrNull()?.coerceAtLeast(1) ?: 10
-                    onFocusGenerated(LinearListAxis(SweepDefaults.defaultFocusValuesForDiopters(caps.minFocusDistanceDiopters, n)))
-                }) { Text("Generate N evenly spaced") }
             }
 
-            Text(
-                "${focus.values().size} value${if (focus.values().size == 1) "" else "s"} will be swept — " +
-                    focus.values().joinToString(", ") { d -> "%.2f D (%s)".format(d, diopterToMetresLabel(d)) },
-                style = MaterialTheme.typography.labelSmall,
+            SheetFooter(
+                section = section,
+                draft = draft,
+                onApply = { onApply(draft) },
+                onCancel = onCancel,
+                onResetDefaults = { draft = SweepDefaults.forCamera(caps); resetVersion++ },
             )
         }
     }
 }
 
 @Composable
-private fun GlobalSettingsSection(
+private fun SheetHeader(section: ConfigSection, draft: SweepConfig) {
+    val tint = section.accent.color()
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(tint))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                section.title,
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+            val count = sectionCount(section, draft)
+            Text(
+                if (count != null) "$count values" else sectionDetail(section, draft),
+                style = MaterialTheme.typography.labelLarge,
+                color = tint,
+            )
+        }
+        Text(
+            section.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SheetFooter(
+    section: ConfigSection,
     draft: SweepConfig,
-    resetKey: Any,
-    onDraftChange: (SweepConfig) -> Unit,
+    onApply: () -> Unit,
+    onCancel: () -> Unit,
     onResetDefaults: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text("Global settings", style = MaterialTheme.typography.titleMedium)
-
-        var framesToAverageField by remember(resetKey) {
-            val initial = draft.framesToAverage.toString()
-            mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
-        }
-        OutlinedTextField(
-            value = framesToAverageField,
-            onValueChange = { newValue ->
-                framesToAverageField = newValue
-                newValue.text.toIntOrNull()?.coerceIn(1, 64)?.let { onDraftChange(draft.copy(framesToAverage = it)) }
-            },
-            label = { Text("Frames to average (n)") },
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "${sectionImpact(section, draft)} → ${draft.totalFrames} frames · est. ${estimatedDuration(draft)}",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Row(
             modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            "Averaging is done on gamma-encoded JPEG pixels, so it reduces noise but is not radiometrically linear.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-
-        var settleFramesField by remember(resetKey) {
-            val initial = draft.settleFrames.toString()
-            mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
-        }
-        OutlinedTextField(
-            value = settleFramesField,
-            onValueChange = { newValue ->
-                settleFramesField = newValue
-                newValue.text.toIntOrNull()?.coerceIn(0, 10)?.let { onDraftChange(draft.copy(settleFrames = it)) }
-            },
-            label = { Text("Settle frames") },
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        )
-        Text(
-            "Warm-up frames discarded after each settings change.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-
-        OutlinedButton(onClick = onResetDefaults, modifier = Modifier.padding(top = 12.dp)) {
-            Text("Reset to defaults")
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onResetDefaults) { Text("Reset all") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                Button(onClick = onApply, enabled = draft.totalCaptures > 0) { Text("Apply") }
+            }
         }
     }
 }
 
+private fun sectionImpact(section: ConfigSection, draft: SweepConfig): String = when (section) {
+    ConfigSection.ISO -> "${draft.isoValues.size} ISO values"
+    ConfigSection.SHUTTER -> "${draft.exposureValuesNs.size} shutter speeds"
+    ConfigSection.FOCUS -> "${draft.focusValues.size} focus distances"
+    ConfigSection.FORMAT -> draft.outputFormat.label
+    ConfigSection.AVERAGE -> "× ${draft.framesToAverage} per configuration"
+    ConfigSection.SETTLE -> "${draft.settleFrames} settle frames"
+}
+
+/** A +/- stepper: bounded small integers are faster to set this way than through a keyboard. */
 @Composable
-private fun SweepSummaryFooter(config: SweepConfig) {
-    val perFrameSec = (config.exposureValuesNs.average().takeIf { !it.isNaN() } ?: 0.0) / 1_000_000_000.0
-    val estSeconds = config.totalFrames * (perFrameSec + 0.15)
-    val estLabel = formatDuration(estSeconds)
-    Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-        Column {
-            Text(
-                "${config.isoValues.size} ISO × ${config.exposureValuesNs.size} exposures × " +
-                    "${config.focusValues.size} focus distances = ${config.totalCaptures} captures",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "× ${config.framesToAverage} frame${if (config.framesToAverage == 1) "" else "s"} each = " +
-                    "${config.totalFrames} frames · est. $estLabel",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+fun Stepper(
+    value: Int,
+    range: IntRange,
+    accentColor: androidx.compose.ui.graphics.Color,
+    onValueChange: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FilledTonalIconButton(
+            onClick = { onValueChange((value - 1).coerceIn(range)) },
+            enabled = value > range.first,
+        ) { Text("−", style = MaterialTheme.typography.titleLarge) }
+        Text(
+            value.toString(),
+            style = MaterialTheme.typography.displaySmall,
+            color = accentColor,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(120.dp),
+        )
+        FilledTonalIconButton(
+            onClick = { onValueChange((value + 1).coerceIn(range)) },
+            enabled = value < range.last,
+        ) { Text("+", style = MaterialTheme.typography.titleLarge) }
     }
-}
-
-private fun nsToMs(ns: Long): String = "%.3f".format(ns / 1_000_000.0)
-
-private fun diopterToMetresLabel(d: Double): String = if (d <= 0.0) "∞" else "%.2f m".format(1.0 / d)
-
-private fun formatDuration(totalSeconds: Double): String {
-    val s = totalSeconds.roundToInt().coerceAtLeast(0)
-    val m = s / 60
-    val rem = s % 60
-    return if (m > 0) "$m min $rem s" else "$rem s"
 }

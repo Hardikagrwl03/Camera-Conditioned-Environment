@@ -15,13 +15,36 @@ import dev.hamster.framesampler.camera.CameraController
 import dev.hamster.framesampler.model.SweepConfig
 import dev.hamster.framesampler.model.SweepDefaults
 import dev.hamster.framesampler.storage.CaptureRecord
+import dev.hamster.framesampler.storage.ConfigStore
 import dev.hamster.framesampler.storage.SweepStorage
+import dev.hamster.framesampler.ui.theme.Accent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+/**
+ * One editable sweep attribute. Each is a tab on the preview screen with its own popup.
+ *
+ * [title] heads the popup, [shortLabel] labels the tab, [description] is the one-line explanation
+ * shown in the popup header. The UI says "Shutter" while the data model and manifest keep
+ * `exposure`/`exposureValuesNs`, so sessions already on disk and any analysis scripts stay readable.
+ */
+enum class ConfigSection(
+    val title: String,
+    val shortLabel: String,
+    val description: String,
+    val accent: Accent,
+) {
+    ISO("ISO sensitivity", "ISO", "Sensor gain applied to each frame.", Accent.ISO),
+    SHUTTER("Shutter speed", "Shutter", "How long each frame is exposed.", Accent.SHUTTER),
+    FOCUS("Focus distance", "Focus", "Where the lens is focused, in diopters.", Accent.FOCUS),
+    FORMAT("Output format", "Format", "How each captured frame is encoded on disk.", Accent.FORMAT),
+    AVERAGE("Frames to average", "Average", "Frames captured per configuration and averaged.", Accent.AVERAGE),
+    SETTLE("Settle frames", "Settle", "Warm-up frames discarded after each settings change.", Accent.SETTLE),
+}
 
 sealed interface UiState {
     data object Initializing : UiState
@@ -43,15 +66,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val cameraManager = application.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val controller = CameraController(cameraManager)
     private val storage = SweepStorage()
+    private val configStore = ConfigStore(application)
 
     private val _uiState = MutableStateFlow<UiState>(UiState.Initializing)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    var configureSheetVisible by mutableStateOf(false)
+    /** The section whose editing overlay is open, or null when none is. */
+    var editingSection by mutableStateOf<ConfigSection?>(null)
         private set
 
     private var previewSurface: Surface? = null
     private var sweepJob: Job? = null
+
+    /**
+     * The live sweep configuration, held here rather than only inside [UiState.Preview] so it
+     * survives camera reinitialisation. The surface is destroyed and recreated on a theme change,
+     * a backgrounding, or the screen going off, and each recreation reopens the camera — rebuilding
+     * defaults there would silently discard whatever the operator had set up.
+     */
+    private var config: SweepConfig? = null
+
+    /** Which camera [config] was built for; a different camera invalidates it. */
+    private var configCameraId: String? = null
+
+    /** Held so [applyConfig] can persist against the camera the config belongs to. */
+    private var currentCaps: CameraCapabilities? = null
 
     fun onSurfaceAvailable(surface: Surface) {
         previewSurface = surface
@@ -61,11 +100,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val cameraId = CameraCapabilitiesReader.selectCameraId(cameraManager)
                 val caps = controller.open(cameraId)
                 controller.startPreview(surface)
-                val defaultConfig = SweepDefaults.forCamera(caps)
+                // Reuse the in-memory configuration across camera reinitialisation, then the
+                // persisted one across app restarts, and only then fall back to defaults.
+                val activeConfig = config?.takeIf { configCameraId == caps.cameraId }
+                    ?: configStore.load(caps)
+                    ?: SweepDefaults.forCamera(caps)
+                config = activeConfig
+                configCameraId = caps.cameraId
+                currentCaps = caps
                 val warning = if (!caps.supportsManualSensor) {
                     "This camera does not support manual sensor control; sweep values may be ignored by the device."
                 } else null
-                _uiState.value = UiState.Preview(defaultConfig, caps, warning)
+                _uiState.value = UiState.Preview(activeConfig, caps, warning)
             } catch (e: Exception) {
                 _uiState.value = UiState.Error(e.message ?: "Failed to open camera")
             }
@@ -83,23 +129,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         previewSurface?.let { onSurfaceAvailable(it) }
     }
 
-    fun openConfigure() {
-        configureSheetVisible = true
+    fun openSection(section: ConfigSection) {
+        editingSection = section
     }
 
-    fun cancelConfigure() {
-        configureSheetVisible = false
+    fun closeSection() {
+        editingSection = null
     }
 
+    /**
+     * Each section's editor hands back a whole [SweepConfig] built from the live one with only its
+     * own field replaced, so applying one section can never clobber another.
+     */
     fun applyConfig(newConfig: SweepConfig) {
+        config = newConfig
+        currentCaps?.let { configStore.save(newConfig, it) }
+        editingSection = null
         val state = _uiState.value as? UiState.Preview ?: return
         _uiState.value = state.copy(config = newConfig)
-        configureSheetVisible = false
-    }
-
-    fun defaultsForCurrentCamera(): SweepConfig? {
-        val state = _uiState.value as? UiState.Preview ?: return null
-        return SweepDefaults.forCamera(state.caps)
     }
 
     fun startSweep() {
@@ -109,9 +156,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = state.copy(warning = "Configuration produces zero captures.")
             return
         }
-        if (!storage.hasEnoughSpace(config.totalCaptures)) {
+        if (!storage.hasEnoughSpace(config.totalCaptures, config.outputFormat)) {
             _uiState.value = UiState.Error(
-                "Not enough free space for an estimated ${config.totalCaptures} captures. Free up space and try again.",
+                "Not enough free space for ${config.totalCaptures} ${config.outputFormat.label} captures " +
+                    "(~${storage.estimatedBytesNeeded(config.totalCaptures, config.outputFormat) / (1024 * 1024)} MB). " +
+                    "Free up space or switch format.",
             )
             return
         }

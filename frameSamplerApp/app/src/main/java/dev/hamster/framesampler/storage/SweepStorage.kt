@@ -5,6 +5,7 @@ import android.media.MediaScannerConnection
 import android.os.Environment
 import android.os.StatFs
 import dev.hamster.framesampler.camera.CameraCapabilities
+import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,7 +15,9 @@ import java.util.Date
 import java.util.Locale
 
 private const val SWEEP_ROOT_DIR_NAME = "FramesSweep"
-private const val BYTES_PER_CAPTURE_ESTIMATE = 5L * 1024 * 1024
+private const val JPEG_BYTES_PER_CAPTURE = 5L * 1024 * 1024
+// A 12 MP lossless PNG runs several times the size of the equivalent JPEG.
+private const val PNG_BYTES_PER_CAPTURE = 30L * 1024 * 1024
 
 class SweepStorage {
 
@@ -42,9 +45,13 @@ class SweepStorage {
         }
     }
 
-    fun estimatedBytesNeeded(totalCaptures: Int): Long = totalCaptures * BYTES_PER_CAPTURE_ESTIMATE
+    fun estimatedBytesNeeded(totalCaptures: Int, format: OutputFormat): Long {
+        val per = if (format == OutputFormat.PNG) PNG_BYTES_PER_CAPTURE else JPEG_BYTES_PER_CAPTURE
+        return totalCaptures * per
+    }
 
-    fun hasEnoughSpace(totalCaptures: Int): Boolean = availableBytes() > estimatedBytesNeeded(totalCaptures)
+    fun hasEnoughSpace(totalCaptures: Int, format: OutputFormat): Boolean =
+        availableBytes() > estimatedBytesNeeded(totalCaptures, format)
 
     fun writeManifest(
         sessionDir: File,
@@ -69,11 +76,14 @@ class SweepStorage {
                 put("hardwareLevel", caps.hardwareLevel)
                 put("largestJpegSize", "${caps.largestJpegSize.width}x${caps.largestJpegSize.height}")
                 put("previewSize", "${caps.previewSize.width}x${caps.previewSize.height}")
+                // Sizes above are in sensor coordinates; analysis needs this to orient the images.
+                put("sensorOrientation", caps.sensorOrientation)
             })
             put("config", JSONObject().apply {
                 put("isoValues", JSONArray(config.isoValues))
                 put("exposureValuesNs", JSONArray(config.exposureValuesNs))
                 put("focusValuesDiopters", JSONArray(config.focusValues.map { it.toDouble() }))
+                put("outputFormat", config.outputFormat.label)
                 put("framesToAverage", config.framesToAverage)
                 put("settleFrames", config.settleFrames)
                 put("totalCaptures", config.totalCaptures)
@@ -127,14 +137,14 @@ class SweepStorage {
     }
 
     companion object {
-        /** iso<ISO>_exp<EXPOSURE_US>us_fd<FOCUS_DIOPTERS>D_avg<N>_<INDEX>.jpg */
+        /** iso<ISO>_exp<EXPOSURE_US>us_fd<FOCUS_DIOPTERS>D_avg<N>_<INDEX>.<ext> */
         fun filenameFor(record: CaptureRecord): String {
             val isoStr = record.requestedIso.toString().padStart(4, '0')
             val expUs = record.requestedExposureNs / 1000
             val expStr = expUs.toString().padStart(6, '0')
             val fdStr = String.format(Locale.US, "%.2f", record.requestedFocusDiopters).replace('.', 'p')
             val idxStr = record.index.toString().padStart(4, '0')
-            return "iso${isoStr}_exp${expStr}us_fd${fdStr}D_avg${record.framesAveraged}_$idxStr.jpg"
+            return "iso${isoStr}_exp${expStr}us_fd${fdStr}D_avg${record.framesAveraged}_$idxStr.${record.extension}"
         }
     }
 }

@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.FrameSampler" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+      DeviceDefault picks up the OEM (One UI) styling and DayNight follows the system dark-mode
+      setting, so the window background matches whatever theme the device is set to. This was
+      previously pinned to android:Theme.Material.Light.NoActionBar, which rendered the app white
+      even with the device in dark mode.
+
+      The platform exposes no DeviceDefault.DayNight.NoActionBar variant, so the action bar is
+      turned off here instead.
+    -->
+    <style name="Theme.FrameSampler" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>
