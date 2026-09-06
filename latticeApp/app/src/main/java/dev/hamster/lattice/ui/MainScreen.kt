@@ -34,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -117,7 +118,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
         when (val state = uiState) {
             is UiState.Capturing -> CapturingOverlay(state, onCancel = viewModel::cancelSweep)
-            is UiState.Finished -> FinishedOverlay(state.summary, onDismiss = viewModel::backToPreview)
+            is UiState.Finished -> FinishedOverlay(
+                state = state,
+                onZip = viewModel::zipSession,
+                onDismiss = viewModel::backToPreview,
+            )
             is UiState.Error -> ErrorOverlay(state.message, onRetry = viewModel::retry)
             else -> Unit
         }
@@ -382,16 +387,54 @@ private fun CapturingOverlay(state: UiState.Capturing, onCancel: () -> Unit) {
 }
 
 @Composable
-private fun FinishedOverlay(summary: String, onDismiss: () -> Unit) {
+private fun FinishedOverlay(state: UiState.Finished, onZip: () -> Unit, onDismiss: () -> Unit) {
     ScrimOverlay {
         Text("Sweep complete", color = OnPreviewText, style = MaterialTheme.typography.titleLarge)
         Text(
-            summary,
+            state.summary,
             color = OnPreviewText,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
-        Button(onClick = onDismiss, modifier = Modifier.padding(top = 16.dp)) { Text("Done") }
+
+        when (val zip = state.zip) {
+            is ZipState.Running -> Text(
+                if (zip.total == 0) "Archiving…" else "Archiving ${zip.done} / ${zip.total}",
+                color = OnPreviewText,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            is ZipState.Done -> Text(
+                "Archived to ${zip.fileName}. The folder has been removed.",
+                color = OnPreviewText,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            is ZipState.Failed -> Text(
+                "${zip.message}. The frames are untouched.",
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            ZipState.Idle -> Unit
+        }
+
+        val archiving = state.zip is ZipState.Running
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(top = 16.dp),
+        ) {
+            // Offered once: after a successful archive the directory is gone, and a failure keeps
+            // the partial zip deleted, so retrying is only meaningful from Idle or Failed.
+            if (state.zip !is ZipState.Done) {
+                OutlinedButton(onClick = onZip, enabled = !archiving) {
+                    Text(if (state.zip is ZipState.Failed) "Retry zip" else "Zip")
+                }
+            }
+            Button(onClick = onDismiss, enabled = !archiving) { Text("Done") }
+        }
     }
 }
 

@@ -13,6 +13,18 @@ adb pull /sdcard/Lattice/<session>/manifest.json .
 adb pull /sdcard/Lattice/<session>/metadata.csv .
 ```
 
+**A session may be a directory or a `.zip`.** The Zip button on the finished screen archives a
+session and deletes the folder, so `ls` can return either. For an archived one, pull and unpack it
+instead — the entries are flat, with no directory prefix:
+
+```bash
+adb pull /sdcard/Lattice/<session>.zip .
+unzip -o <session>.zip -d <session>/
+```
+
+The frames inside are stored uncompressed, so unpacking is fast and the archive is the same size as
+the folder was.
+
 A session cancelled part-way still has a valid manifest covering what was captured. A partial
 session is a usable dataset, not a corrupt one.
 
