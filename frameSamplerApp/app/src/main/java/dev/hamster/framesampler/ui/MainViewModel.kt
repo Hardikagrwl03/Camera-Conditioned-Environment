@@ -134,18 +134,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         editingSection = section
     }
 
+    /**
+     * Closing an editor is the commit point. Edits are already live (see [updateConfig]); this is
+     * where the result is written to disk, so a drag across a slider costs one save rather than one
+     * per frame.
+     */
     fun closeSection() {
         editingSection = null
+        val current = config ?: return
+        currentCaps?.let { configStore.save(current, it) }
     }
 
     /**
-     * Each section's editor hands back a whole [SweepConfig] built from the live one with only its
-     * own field replaced, so applying one section can never clobber another.
+     * Applies an edit immediately. Each section's editor hands back a whole [SweepConfig] built
+     * from the live one with only its own field replaced, so editing one section can never clobber
+     * another.
      */
-    fun applyConfig(newConfig: SweepConfig) {
+    fun updateConfig(newConfig: SweepConfig) {
         config = newConfig
-        currentCaps?.let { configStore.save(newConfig, it) }
-        editingSection = null
         val state = _uiState.value as? UiState.Preview ?: return
         _uiState.value = state.copy(config = newConfig)
     }

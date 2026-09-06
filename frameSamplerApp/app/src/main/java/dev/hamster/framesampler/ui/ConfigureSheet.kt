@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.hamster.framesampler.camera.CameraCapabilities
 import dev.hamster.framesampler.model.OutputFormat
@@ -52,25 +55,27 @@ import kotlin.math.roundToInt
  * Editing popup for one [ConfigSection], covering only the lower part of the screen so the preview
  * stays visible above it.
  *
- * The draft starts as a copy of the live config and only this section's field is touched, so
- * applying one section can never clobber another.
+ * Edits apply live: [onConfigChange] fires on every change and the caller commits it immediately,
+ * so closing the sheet — by the handle, the scrim or Back — is all that is needed. There is no
+ * Apply or Cancel, and correspondingly no draft to get out of sync with the live configuration.
+ * Each editor hands back a whole config with only its own field replaced, so one section can never
+ * clobber another.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigSheet(
     section: ConfigSection,
-    initialConfig: SweepConfig,
+    config: SweepConfig,
     caps: CameraCapabilities,
-    onApply: (SweepConfig) -> Unit,
-    onCancel: () -> Unit,
+    onConfigChange: (SweepConfig) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    // Keyed on section so opening a different tab starts from the live config, not a stale draft.
-    var draft by remember(section) { mutableStateOf(initialConfig) }
+    // Only re-seeds the text field buffers on a programmatic replacement (Reset), never on typing.
     var resetVersion by remember(section) { mutableStateOf(0) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
-        onDismissRequest = onCancel,
+        onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = { BottomSheetDefaults.DragHandle() },
@@ -87,7 +92,7 @@ fun ConfigSheet(
                 .padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            SheetHeader(section, draft)
+            SheetHeader(section, config)
 
             // The scrollable body yields height to the keyboard so the footer's Apply/Cancel
             // never get clipped: a fixed cap leaves the footer off-screen once the IME is up.
@@ -105,68 +110,68 @@ fun ConfigSheet(
             ) {
                 when (section) {
                     ConfigSection.ISO -> GeometricAxisEditor(
-                        axis = draft.iso,
+                        axis = config.iso,
                         unitLabel = "ISO",
                         supportedHint = "Camera supports ${caps.sensitivityRange.lower} – ${caps.sensitivityRange.upper}",
                         accentColor = section.accent.color(),
                         resetKey = resetVersion,
                         presets = isoPresets(caps),
-                        onAxisChange = { draft = draft.copy(iso = it) },
-                        onPreset = { draft = draft.copy(iso = it); resetVersion++ },
+                        onAxisChange = { onConfigChange(config.copy(iso = it)) },
+                        onPreset = { onConfigChange(config.copy(iso = it)); resetVersion++ },
                         formatValue = { it.roundToInt().toString() },
                         chipLabel = { it.roundToInt().toString() },
                     )
 
                     ConfigSection.SHUTTER -> GeometricAxisEditor(
-                        axis = draft.exposure,
+                        axis = config.exposure,
                         unitLabel = "ms",
                         supportedHint = "Camera supports ${trim(caps.exposureTimeRangeNs.lower / 1e6)} – " +
                             "${trim(caps.exposureTimeRangeNs.upper / 1e6)} ms",
                         accentColor = section.accent.color(),
                         resetKey = resetVersion,
                         presets = shutterPresets(caps),
-                        onAxisChange = { draft = draft.copy(exposure = it) },
-                        onPreset = { draft = draft.copy(exposure = it); resetVersion++ },
+                        onAxisChange = { onConfigChange(config.copy(exposure = it)) },
+                        onPreset = { onConfigChange(config.copy(exposure = it)); resetVersion++ },
                         formatValue = { trim(it / 1e6) },
                         chipLabel = { shutterLabel(it.toLong()) },
                     )
 
                     ConfigSection.FOCUS -> FocusAxisEditor(
                         caps = caps,
-                        focus = draft.focus,
+                        focus = config.focus,
                         accentColor = section.accent.color(),
                         resetKey = resetVersion,
-                        onFocusChange = { draft = draft.copy(focus = it) },
-                        onFocusGenerated = { draft = draft.copy(focus = it); resetVersion++ },
+                        onFocusChange = { onConfigChange(config.copy(focus = it)) },
+                        onPreset = { onConfigChange(config.copy(focus = it)); resetVersion++ },
                     )
 
                     ConfigSection.FORMAT -> FormatEditor(
-                        draft = draft,
+                        draft = config,
                         accentColor = section.accent.color(),
                         freeBytes = rememberFreeBytes(),
-                        onDraftChange = { draft = it },
+                        onDraftChange = onConfigChange,
                     )
 
                     ConfigSection.AVERAGE -> AverageEditor(
-                        draft = draft,
+                        draft = config,
                         accentColor = section.accent.color(),
-                        onDraftChange = { draft = it },
+                        onDraftChange = onConfigChange,
                     )
 
                     ConfigSection.SETTLE -> SettleEditor(
-                        draft = draft,
+                        draft = config,
                         accentColor = section.accent.color(),
-                        onDraftChange = { draft = it },
+                        onDraftChange = onConfigChange,
                     )
 
                     ConfigSection.DOWNSCALE -> {
-                        val full = if (draft.outputFormat == OutputFormat.PNG) caps.largestYuvSize else caps.largestJpegSize
+                        val full = if (config.outputFormat == OutputFormat.PNG) caps.largestYuvSize else caps.largestJpegSize
                         DownscaleEditor(
-                            draft = draft,
+                            draft = config,
                             accentColor = section.accent.color(),
                             fullWidth = full.width,
                             fullHeight = full.height,
-                            onDraftChange = { draft = it },
+                            onDraftChange = onConfigChange,
                         )
                     }
                 }
@@ -174,10 +179,11 @@ fun ConfigSheet(
 
             SheetFooter(
                 section = section,
-                draft = draft,
-                onApply = { onApply(draft) },
-                onCancel = onCancel,
-                onResetDefaults = { draft = SweepDefaults.forCamera(caps); resetVersion++ },
+                config = config,
+                onReset = {
+                    onConfigChange(resetSection(section, config, caps))
+                    resetVersion++
+                },
             )
         }
     }
@@ -216,27 +222,47 @@ private fun SheetHeader(section: ConfigSection, draft: SweepConfig) {
 @Composable
 private fun SheetFooter(
     section: ConfigSection,
-    draft: SweepConfig,
-    onApply: () -> Unit,
-    onCancel: () -> Unit,
-    onResetDefaults: () -> Unit,
+    config: SweepConfig,
+    onReset: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
-            "${sectionImpact(section, draft)} → ${draft.totalFrames} frames · est. ${estimatedDuration(draft)}",
+            "${sectionImpact(section, config)} → ${config.totalFrames} frames · est. ${estimatedDuration(config)}",
             style = MaterialTheme.typography.titleSmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = onResetDefaults) { Text("Reset all") }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onCancel) { Text("Cancel") }
-                Button(onClick = onApply, enabled = draft.totalCaptures > 0) { Text("Apply") }
-            }
-        }
+        Spacer(Modifier.width(12.dp))
+        // Outlined rather than a text button: the edit it performs is immediate and there is no
+        // Cancel to undo it, so it should read unmistakably as a button rather than as a link.
+        OutlinedButton(onClick = onReset) { Text("Reset") }
+    }
+}
+
+/**
+ * Resets only the section being edited. Scoped rather than global because the edit takes effect
+ * immediately and there is no Cancel to undo it — a single button that silently wiped all seven
+ * settings would be unrecoverable.
+ */
+private fun resetSection(
+    section: ConfigSection,
+    config: SweepConfig,
+    caps: CameraCapabilities,
+): SweepConfig {
+    val defaults = SweepDefaults.forCamera(caps)
+    return when (section) {
+        ConfigSection.ISO -> config.copy(iso = defaults.iso)
+        ConfigSection.SHUTTER -> config.copy(exposure = defaults.exposure)
+        ConfigSection.FOCUS -> config.copy(focus = defaults.focus)
+        ConfigSection.FORMAT -> config.copy(outputFormat = defaults.outputFormat)
+        ConfigSection.AVERAGE -> config.copy(framesToAverage = defaults.framesToAverage)
+        ConfigSection.SETTLE -> config.copy(settleFrames = defaults.settleFrames)
+        ConfigSection.DOWNSCALE -> config.copy(downscale = defaults.downscale)
     }
 }
 
@@ -250,17 +276,25 @@ private fun sectionImpact(section: ConfigSection, draft: SweepConfig): String = 
     ConfigSection.DOWNSCALE -> if (draft.downscale == 1) "full resolution" else "${draft.downscale}x downscale"
 }
 
-/** A +/- stepper: bounded small integers are faster to set this way than through a keyboard. */
+/**
+ * A +/- stepper: bounded small integers are faster to set this way than through a keyboard.
+ *
+ * [compact] shrinks it to sit beside a label instead of owning the row. Pass a non-filling
+ * [modifier] with it: the default fills the width, which inside a Row leaves nothing for a
+ * sibling weighted label and collapses it to one character per line.
+ */
 @Composable
 fun Stepper(
     value: Int,
     range: IntRange,
     accentColor: androidx.compose.ui.graphics.Color,
     onValueChange: (Int) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    compact: Boolean = false,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
+        modifier = modifier,
+        horizontalArrangement = if (compact) Arrangement.End else Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         FilledTonalIconButton(
@@ -269,10 +303,10 @@ fun Stepper(
         ) { Text("−", style = MaterialTheme.typography.titleLarge) }
         Text(
             value.toString(),
-            style = MaterialTheme.typography.displaySmall,
+            style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
             color = accentColor,
             textAlign = TextAlign.Center,
-            modifier = Modifier.width(120.dp),
+            modifier = Modifier.width(if (compact) 48.dp else 120.dp),
         )
         FilledTonalIconButton(
             onClick = { onValueChange((value + 1).coerceIn(range)) },

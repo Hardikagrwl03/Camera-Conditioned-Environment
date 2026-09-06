@@ -126,10 +126,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         if (state is UiState.Preview && section != null) {
             ConfigSheet(
                 section = section,
-                initialConfig = state.config,
+                config = state.config,
                 caps = state.caps,
-                onApply = viewModel::applyConfig,
-                onCancel = viewModel::closeSection,
+                onConfigChange = viewModel::updateConfig,
+                onDismiss = viewModel::closeSection,
             )
         }
     }
