@@ -1,6 +1,17 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// Release signing is optional and read from an untracked keystore.properties. Without it the
+// release build stays unsigned (and therefore uninstallable) rather than failing, so a clone with
+// no keystore still builds. See "Sharing a build" in README.md.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
 }
 
 android {
@@ -13,16 +24,32 @@ android {
         applicationId = "dev.hamster.lattice"
         minSdk = 35
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            create("release") {
+                // Resolved against the project root, not the module: file() inside the android
+                // block is relative to app/, which is not where a keystore naturally lives.
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             optimization {
                 enable = false
+            }
+            if (keystorePropsFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }

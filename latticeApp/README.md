@@ -66,6 +66,58 @@ Developed against a Samsung SM-S711B (`FULL` hardware level, `CALIBRATED` focus 
 ./gradlew :app:testDebugUnitTest    # unit tests
 ```
 
+### Sharing a build
+
+**To hand someone an APK, the debug build is the answer.** It is signed with the shared Android
+debug certificate, so it installs immediately with no setup:
+
+```bash
+./gradlew :app:assembleDebug
+cp app/build/outputs/apk/debug/app-debug.apk dist/Lattice-1.1-debug.apk
+```
+
+`dist/` is gitignored. The APK is ~29 MB and needs no signing work at all.
+
+**A release build is smaller but unsigned by default**, and Android will not install an unsigned
+APK — `assembleRelease` alone produces `app-release-unsigned.apk` (~21 MB) that cannot be used. To
+sign it you need your own keystore, created once and kept forever: it is the identity that lets
+future versions install *over* an existing one, and losing it means your friend has to uninstall
+before updating.
+
+```bash
+keytool -genkey -v -keystore lattice-release.jks         -keyalg RSA -keysize 2048 -validity 10000 -alias lattice
+```
+
+Then create `keystore.properties` at the project root — untracked, alongside the `.jks`:
+
+```properties
+storeFile=lattice-release.jks
+storePassword=…
+keyAlias=lattice
+keyPassword=…
+```
+
+`app/build.gradle.kts` picks it up automatically; without it the release build simply stays
+unsigned rather than failing, so a clone with no keystore still builds.
+
+```bash
+./gradlew :app:assembleRelease
+cp app/build/outputs/apk/release/app-release.apk dist/Lattice-1.1.apk
+```
+
+**Bump `versionCode` before every build you hand out.** Android refuses to install an update whose
+`versionCode` is not higher than the installed one, so shipping a new feature under the old number
+forces the recipient to uninstall — losing their saved configuration. `versionCode` and
+`versionName` live in `app/build.gradle.kts`; name the APK after `versionName` so the two never
+drift apart.
+
+**What the recipient needs.** `minSdk` is 35, so **Android 15 or newer** — the app will not install
+below that. Their camera should report `MANUAL_SENSOR` or the sweep values are ignored by the
+device and the app is close to useless; `MANUAL_POST_PROCESSING` is needed for the white balance
+axis. They must enable installing from unknown sources, and grant all-files access in-app. Note
+also that `focusGridStep()` encodes an actuator law measured on one device — it only caps and
+warns, so it degrades safely, but the caps will be wrong for their hardware.
+
 Two permissions are required at runtime, both handled by `PermissionGate`: `CAMERA`, and
 `MANAGE_EXTERNAL_STORAGE` for writing outside app-private storage. The gate re-checks on resume, so
 returning from the system settings screen is enough.
@@ -91,7 +143,7 @@ app/src/main/java/dev/hamster/lattice/
 │   ├── WhiteBalanceAxis.kt      WB axis and its three modes
 │   └── OutputFormat.kt          JPEG | PNG
 ├── storage/
-│   ├── SweepStorage.kt          Session dirs, filenames, manifest.json, metadata.csv
+│   ├── SweepStorage.kt          Session dirs, filenames, manifest.json, metadata.csv, zip
 │   ├── CaptureRecord.kt         One row of per-frame truth
 │   └── ConfigStore.kt           SharedPreferences persistence, schema v3 + migrations
 └── ui/
@@ -146,6 +198,17 @@ for focus:                 # outermost: lens travel is the slowest transition
 
 `settle()` re-reads the result metadata and confirms the sensor actually applied the request before
 the kept frame; the outcome becomes the `settled` flag in the manifest.
+
+### Archiving
+
+`SweepStorage.zipSession` packs a finished session into a sibling `<name>.zip` and deletes the
+directory — but only after reopening the archive and checking its entry count against the source
+file list. A failure removes the partial zip and leaves the frames untouched. Frames are stored
+uncompressed (they are already PNG or JPEG); only the manifest and CSV are deflated, so the archive
+is the same size as the folder. It exists to make one sweep one file, not to save space.
+
+The `Finished` state carries a `ZipState` (`Idle`, `Running`, `Done`, `Failed`) so the overlay can
+show progress, and the work runs on the IO dispatcher because a large sweep is gigabytes.
 
 ### Persistence
 
@@ -282,6 +345,7 @@ constraints the numbers satisfy.
 
 - [ ] **Instrumented tests.** No Compose UI test coverage; `androidTest/` is the template stub.
 - [ ] **Resume an interrupted sweep**, using the partial manifest a cancelled run already writes.
-- [ ] **In-app session browser** — currently sessions are only reachable over adb or a file manager.
+- [ ] **In-app session browser** — sessions are still only reachable over adb or a file manager.
+      The Zip button makes one session easy to move; it does not make them browsable.
 - [ ] **Decide whether Reset should be global.** It is section-scoped today, which is safer but
       means no single "start over".

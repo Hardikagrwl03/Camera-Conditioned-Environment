@@ -172,6 +172,19 @@ first, so the lens moves as little as possible.
 everything that was captured up to that point. A partial session is a valid dataset, not a
 corrupted one. The same holds if the sweep fails.
 
+**When the sweep finishes** you get two buttons. **Done** returns to the preview. **Zip** packs the
+whole session — frames, manifest and CSV — into a single `<session>.zip` beside it and removes the
+folder, which is much easier to copy off the phone than several hundred files.
+
+The archive is not smaller: PNG and JPEG are already compressed, so the frames are stored as-is
+rather than wasting minutes of CPU deflating them for nothing. Only the manifest and CSV are
+compressed. The point is one file to move, not a smaller one.
+
+The folder is deleted **only after** the archive has been reopened and verified to hold every file.
+If anything goes wrong the partial zip is removed and your frames are left untouched, and the
+button offers a retry. Zipping needs about as much free space again as the session itself, so it
+checks first and refuses rather than filling the disk.
+
 ---
 
 ## 6. What you get
@@ -186,6 +199,10 @@ Each sweep writes one directory:
 ├── manifest.json
 └── metadata.csv
 ```
+
+If you used **Zip** on the finished screen, that whole directory is replaced by a single
+`20260906_213517.zip` sitting in `/sdcard/Lattice/` instead. The entries inside are flat — the same
+filenames, with no folder prefix.
 
 ### Filenames
 

@@ -64,6 +64,20 @@ suite must stay free of them — `android.util.Range` and friends stub out to th
 the logic behind a pure function taking plain values, the way `SweepDefaults` exposes pure
 generators alongside its `CameraCapabilities` overloads.
 
+**`INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match`.** A release build (signed with the
+project keystore) and a debug build (signed with the Android debug key) cannot replace each other.
+Uninstall first — which also wipes the saved configuration:
+
+```bash
+adb uninstall dev.hamster.lattice
+./gradlew :app:installDebug
+```
+
+This bites whenever you switch between `installDebug` and a hand-installed `dist/Lattice-*.apk`.
+
+**`INSTALL_FAILED_VERSION_DOWNGRADE`.** The installed build has a higher `versionCode`. Either bump
+it in `app/build.gradle.kts` or uninstall first.
+
 **The app starts but capture refuses with a space warning.** The pre-flight check estimates ~5 MB
 per JPEG and ~30 MB per PNG frame. Shrink an axis to a single value (switch it to List, type one
 number) or free space.
