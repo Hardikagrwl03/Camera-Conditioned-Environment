@@ -11,20 +11,44 @@ const val DEFAULT_BAND_COUNT = 3
 
 object SweepDefaults {
 
-    private const val DEFAULT_COUNT = 10
-    private const val MIN_EXPOSURE_NS = 100_000L // 100 us
-    private const val MAX_EXPOSURE_NS = 500_000_000L // 500 ms
+    /** Steps on each of the two geometric axes. */
+    private const val DEFAULT_COUNT = 9
 
+    private const val DEFAULT_ISO_LOW = 100.0
+    private const val DEFAULT_ISO_HIGH = 1600.0
+
+    private const val DEFAULT_EXPOSURE_LOW_NS = 1_000_000L    // 1 ms
+    private const val DEFAULT_EXPOSURE_HIGH_NS = 100_000_000L // 100 ms
+
+    private const val DEFAULT_SETTLE_FRAMES = 1
+    private const val DEFAULT_AVERAGE_FRAMES = 1
+    private const val DEFAULT_DOWNSCALE = 2
+    private val DEFAULT_FORMAT = OutputFormat.PNG
+
+    /**
+     * A usable starting point rather than the widest possible sweep: a mid ISO range, exposures
+     * from 1 to 100 ms, focus split equally across the four distance bands, and the device's own
+     * white balance.
+     *
+     * Every value is clamped to what the camera actually reports, so a sensor with a narrower ISO
+     * or exposure range gets a valid configuration rather than one the HAL will silently reject.
+     */
     fun forCamera(caps: CameraCapabilities): SweepConfig {
+        val isoLow = DEFAULT_ISO_LOW.coerceIn(
+            caps.sensitivityRange.lower.toDouble(), caps.sensitivityRange.upper.toDouble(),
+        )
+        val isoHigh = DEFAULT_ISO_HIGH.coerceIn(isoLow, caps.sensitivityRange.upper.toDouble())
         val isoAxis = GeometricAxis(
             mode = AxisMode.RANGE,
-            start = caps.sensitivityRange.lower.toDouble(),
-            end = caps.sensitivityRange.upper.toDouble(),
+            start = isoLow,
+            end = isoHigh,
             count = DEFAULT_COUNT,
         )
 
-        val expStart = caps.exposureTimeRangeNs.lower.coerceAtLeast(MIN_EXPOSURE_NS)
-        val expEnd = caps.exposureTimeRangeNs.upper.coerceAtMost(MAX_EXPOSURE_NS).coerceAtLeast(expStart)
+        val expStart = DEFAULT_EXPOSURE_LOW_NS.coerceIn(
+            caps.exposureTimeRangeNs.lower, caps.exposureTimeRangeNs.upper,
+        )
+        val expEnd = DEFAULT_EXPOSURE_HIGH_NS.coerceIn(expStart, caps.exposureTimeRangeNs.upper)
         val exposureAxis = GeometricAxis(
             mode = AxisMode.RANGE,
             start = expStart.toDouble(),
@@ -32,18 +56,32 @@ object SweepDefaults {
             count = DEFAULT_COUNT,
         )
 
-        // Uniform, with the sample budget split equally across the four distance bands.
+        // Uniform, weighted toward the near half. Counts are values added *between* each band's
+        // edges, and the five edges themselves are always captured, so 0/1/2/2 resolves to ten
+        // focus distances. The 100 m - infinity band gets none: it spans 0.01 D, under a tenth of
+        // a pixel of defocus, so its two edges already cover everything optically distinct there.
         val focusAxis = FocusAxis(
             mode = AxisMode.RANGE,
+            bands = FocusBandCounts(infinity = 0, far = 1, mid = 2, near = 2),
             maxDiopters = caps.minFocusDistanceDiopters.toDouble(),
+        )
+
+        // The offered downscale factors depend on the frame size the default format produces, so
+        // snap rather than assume 2 divides this sensor evenly.
+        val frame = if (DEFAULT_FORMAT == OutputFormat.PNG) caps.largestYuvSize else caps.largestJpegSize
+        val downscale = nearestDownscaleFactor(
+            DEFAULT_DOWNSCALE, downscaleFactorsFor(frame.width, frame.height),
         )
 
         return SweepConfig(
             iso = isoAxis,
             exposure = exposureAxis,
             focus = focusAxis,
-            framesToAverage = 1,
-            settleFrames = 2,
+            whiteBalance = WhiteBalanceAxis(),   // AUTO: the device's own balance, held fixed
+            framesToAverage = DEFAULT_AVERAGE_FRAMES,
+            settleFrames = DEFAULT_SETTLE_FRAMES,
+            outputFormat = DEFAULT_FORMAT,
+            downscale = downscale,
         )
     }
 }
