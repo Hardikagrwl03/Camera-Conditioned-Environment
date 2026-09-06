@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# shareable APK builds
+/dist/
+keystore.properties
+*.jks

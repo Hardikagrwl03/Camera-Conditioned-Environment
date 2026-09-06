@@ -73,12 +73,19 @@ ISO `400`, shutter `20` (milliseconds), focus `1.0` (diopters) gives a sweep of
 Note the default format is PNG at ~30 MB per full-resolution frame, so the pre-flight space check
 bites much sooner than it did under JPEG. Switch Format to JPEG while iterating if space is tight.
 
+**Testing the Zip button** needs roughly as much free space again as the session, since the archive
+is written before the folder is removed. It refuses rather than filling the disk, so a space
+failure there is the feature working, not a bug.
+
 ## After verifying
 
-Delete the sessions you created, by exact name, and leave the app at defaults:
+Delete the sessions you created, by exact name, and leave the app at defaults. A session you
+archived with the Zip button is a `<name>.zip` file rather than a directory, so check which you are
+removing:
 
 ```bash
-adb shell rm -rf /sdcard/Lattice/<exact_session_name>
+adb shell rm -rf /sdcard/Lattice/<exact_session_name>      # directory
+adb shell rm -f  /sdcard/Lattice/<exact_session_name>.zip  # archived
 adb shell pm clear dev.hamster.lattice
 adb shell pm grant dev.hamster.lattice android.permission.CAMERA
 ```

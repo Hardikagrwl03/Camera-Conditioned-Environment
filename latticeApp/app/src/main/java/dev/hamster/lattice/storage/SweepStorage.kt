@@ -13,6 +13,10 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import kotlin.math.roundToInt
 
 private const val SWEEP_ROOT_DIR_NAME = "Lattice"
@@ -31,6 +35,9 @@ class SweepStorage {
         dir.mkdirs()
         return dir
     }
+
+    /** Resolves a session directory by name, for operations that only carry the name in UI state. */
+    fun sessionDirFor(name: String): File = File(root, name)
 
     fun writeJpeg(sessionDir: File, record: CaptureRecord, bytes: ByteArray) {
         val file = File(sessionDir, filenameFor(record))
@@ -150,6 +157,66 @@ class SweepStorage {
                 .append(r.timestampNs).append('\n')
         }
         File(sessionDir, "metadata.csv").writeText(sb.toString())
+    }
+
+    /**
+     * Packs [sessionDir] into a sibling `<name>.zip` and, only once the archive has been reopened
+     * and verified, deletes the directory.
+     *
+     * The frames are already compressed - PNG internally, JPEG by definition - so they are stored
+     * without deflating them. Running DEFLATE over gigabytes of PNG costs minutes of CPU for
+     * roughly nothing; only the manifest and CSV are worth compressing. The point of this archive
+     * is one file to move, not a smaller one.
+     *
+     * Throws rather than deleting anything if the archive cannot be written or does not verify.
+     */
+    fun zipSession(sessionDir: File, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): File {
+        val files = sessionDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name }
+            ?: throw IllegalStateException("Session directory is not readable")
+        if (files.isEmpty()) throw IllegalStateException("Session directory is empty")
+
+        val sourceBytes = files.sumOf { it.length() }
+        if (availableBytes() < sourceBytes) {
+            throw IllegalStateException(
+                "Not enough free space to archive: needs about ${sourceBytes / (1024 * 1024)} MB",
+            )
+        }
+
+        val target = File(sessionDir.parentFile, "${sessionDir.name}.zip")
+        if (target.exists()) throw IllegalStateException("${target.name} already exists")
+
+        try {
+            ZipOutputStream(target.outputStream().buffered()).use { zos ->
+                files.forEachIndexed { index, file ->
+                    // Already-compressed payloads are stored; text is deflated.
+                    val compressible = file.name.endsWith(".json") || file.name.endsWith(".csv")
+                    zos.setLevel(if (compressible) Deflater.BEST_COMPRESSION else Deflater.NO_COMPRESSION)
+                    zos.putNextEntry(ZipEntry(file.name))
+                    file.inputStream().buffered().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                    onProgress(index + 1, files.size)
+                }
+            }
+            // Reopen and count before anything is deleted: a truncated archive must never be
+            // mistaken for a good one.
+            val entries = ZipFile(target).use { zip -> zip.entries().asSequence().count() }
+            if (entries != files.size) {
+                throw IllegalStateException("Archive holds $entries of ${files.size} files")
+            }
+        } catch (e: Exception) {
+            target.delete()
+            throw e
+        }
+
+        if (!sessionDir.deleteRecursively()) {
+            throw IllegalStateException("Archived to ${target.name}, but the folder could not be deleted")
+        }
+        return target
+    }
+
+    /** Re-indexes a path after it is created or removed, so MTP and file managers see the change. */
+    fun scanPaths(context: Context, vararg paths: File) {
+        MediaScannerConnection.scanFile(context, paths.map { it.absolutePath }.toTypedArray(), null, null)
     }
 
     fun scanSessionDir(context: Context, sessionDir: File) {

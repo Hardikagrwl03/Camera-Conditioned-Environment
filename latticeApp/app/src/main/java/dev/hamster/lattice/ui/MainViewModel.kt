@@ -23,7 +23,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * One editable sweep attribute. Each is a tab on the preview screen with its own popup.
@@ -50,6 +53,14 @@ enum class ConfigSection(
     FORMAT("Output format", "Format", "How each captured frame is encoded on disk.", Accent.FORMAT),
 }
 
+/** Progress of archiving a finished session into a single zip. */
+sealed interface ZipState {
+    data object Idle : ZipState
+    data class Running(val done: Int, val total: Int) : ZipState
+    data class Done(val fileName: String) : ZipState
+    data class Failed(val message: String) : ZipState
+}
+
 sealed interface UiState {
     data object Initializing : UiState
     data class Preview(val config: SweepConfig, val caps: CameraCapabilities, val warning: String? = null) : UiState
@@ -61,7 +72,13 @@ sealed interface UiState {
         val currentFocus: Float,
         val sessionDirName: String,
     ) : UiState
-    data class Finished(val config: SweepConfig, val caps: CameraCapabilities, val summary: String) : UiState
+    data class Finished(
+        val config: SweepConfig,
+        val caps: CameraCapabilities,
+        val summary: String,
+        val sessionDirName: String,
+        val zip: ZipState = ZipState.Idle,
+    ) : UiState
     data class Error(val message: String) : UiState
 }
 
@@ -216,7 +233,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     append("Captured ${records.size} frames to ${sessionDir.name}.")
                     if (unsettled > 0) append(" $unsettled of ${records.size} did not settle to the requested values — see manifest.json.")
                 }
-                _uiState.value = UiState.Finished(config, state.caps, summary)
+                _uiState.value = UiState.Finished(config, state.caps, summary, sessionDir.name)
             } catch (e: CancellationException) {
                 cancelled = true
                 writeManifestForWhateverWasCaptured()
@@ -234,6 +251,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelSweep() {
         sweepJob?.cancel()
+    }
+
+    /**
+     * Archives the finished session into a single zip and removes the directory.
+     *
+     * The delete only happens inside [SweepStorage.zipSession] after the archive has been reopened
+     * and verified, so a failure here leaves the frames untouched. Runs on the IO dispatcher: a
+     * large sweep is gigabytes and would otherwise block the UI for minutes.
+     */
+    fun zipSession() {
+        val state = _uiState.value
+        if (state !is UiState.Finished || state.zip != ZipState.Idle) return
+        val dir = File(storage.sessionDirFor(state.sessionDirName).path)
+
+        viewModelScope.launch {
+            _uiState.value = state.copy(zip = ZipState.Running(0, 0))
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    storage.zipSession(dir) { done, total ->
+                        val current = _uiState.value
+                        if (current is UiState.Finished) {
+                            _uiState.value = current.copy(zip = ZipState.Running(done, total))
+                        }
+                    }
+                }
+            }
+            val current = _uiState.value
+            if (current !is UiState.Finished) return@launch
+            _uiState.value = result.fold(
+                onSuccess = { zip ->
+                    storage.scanPaths(getApplication(), zip, dir)
+                    current.copy(zip = ZipState.Done(zip.name))
+                },
+                onFailure = { e ->
+                    current.copy(zip = ZipState.Failed(e.message ?: "Could not archive the session"))
+                },
+            )
+        }
     }
 
     /** Spec item 9: after a sweep finishes, return to the initial preview screen. */
