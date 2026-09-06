@@ -1,1 +1,0 @@
-Frame Sampling Application
