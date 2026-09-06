@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.hamster.framesampler.camera.CameraCapabilitiesReader
@@ -207,7 +208,8 @@ private fun AttributeTabs(
     onSectionClick: (ConfigSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rows = listOf(ConfigSection.entries.take(3), ConfigSection.entries.drop(3))
+    // Eight sections split evenly; an odd split left one row visibly wider than the other.
+    val rows = ConfigSection.entries.chunked(4)
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         rows.forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -237,34 +239,56 @@ private fun AttributeTab(
         onClick = { onClick(section) },
         shape = RoundedCornerShape(18.dp),
         color = section.accent.container(),
-        modifier = modifier
-            .heightIn(min = 58.dp)
-            .semantics { contentDescription = "Edit ${section.title}" },
+        modifier = modifier.semantics { contentDescription = "Edit ${section.title}" },
     ) {
-        Column(
+        // Sized for four tiles per row: at that width the longest labels ("AVERAGE", "SHUTTER")
+        // were close to ellipsizing, so the type, the dot and the padding all come down together
+        // rather than shrinking the text alone and leaving the tile looking loose.
+        //
+        // The dot leads the whole text block rather than sitting inside the label's row. Inside
+        // the row it indented only the label, so the label and the value started at different
+        // left edges and the tile read as ragged. As a sibling of the Column, both lines share
+        // one edge and the dot reads as a marker for the tile.
+        //
+        // The minimum height lives here rather than on the Surface, with the content centred:
+        // on the Surface it left the content top-aligned inside a taller box, so all the slack
+        // pooled below the text and the tile read as bottom-heavy despite symmetric padding.
+        Row(
             modifier = Modifier
-                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .heightIn(min = 58.dp)
+                .padding(horizontal = 8.dp, vertical = 9.dp)
                 .animateContentSize(),
+            verticalAlignment = Alignment.Top,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(6.dp).clip(CircleShape).background(tint))
-                Spacer(Modifier.width(6.dp))
+            // Optically centred on the label's 14sp line box rather than on the whole two-line
+            // block: centred on the block it sat beside the value and read as a bullet for the
+            // number, not as a marker for the tile.
+            Box(Modifier.padding(top = 4.dp).size(5.dp).clip(CircleShape).background(tint))
+            Spacer(Modifier.width(6.dp))
+            Column(verticalArrangement = Arrangement.Center) {
                 Text(
                     section.shortLabel.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        letterSpacing = 0.4.sp,
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            Crossfade(targetState = value, label = "tabValue") { v ->
-                Text(
-                    v,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = tint,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Crossfade(targetState = value, label = "tabValue") { v ->
+                    Text(
+                        v,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp,
+                        ),
+                        color = tint,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }

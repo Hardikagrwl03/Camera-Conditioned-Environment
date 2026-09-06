@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
+import dev.hamster.framesampler.model.WhiteBalanceMode
 import kotlin.math.roundToInt
 
 /**
@@ -44,6 +45,9 @@ fun sectionValue(section: ConfigSection, config: SweepConfig): String = when (se
     ConfigSection.AVERAGE -> "${config.framesToAverage}"
     ConfigSection.SETTLE -> "${config.settleFrames}"
     ConfigSection.DOWNSCALE -> "${config.downscale}x"
+    ConfigSection.WHITE_BALANCE ->
+        if (config.whiteBalance.mode == WhiteBalanceMode.AUTO) "AUTO"
+        else "${config.whiteBalanceValues.size}"
 }
 
 /** The longer description a popup header shows next to its title. */
@@ -55,13 +59,29 @@ fun sectionDetail(section: ConfigSection, config: SweepConfig): String = when (s
     ConfigSection.AVERAGE -> if (config.framesToAverage == 1) "single frame" else "${config.framesToAverage} frames averaged"
     ConfigSection.SETTLE -> "${config.settleFrames} warm-up frames"
     ConfigSection.DOWNSCALE -> if (config.downscale == 1) "full resolution" else "${config.downscale}x smaller"
+    ConfigSection.WHITE_BALANCE -> whiteBalanceSummary(config)
 }
+
+/** "auto" for the untouched path, otherwise the kelvin span the sweep covers. */
+fun whiteBalanceSummary(config: SweepConfig): String {
+    if (config.whiteBalance.mode == WhiteBalanceMode.AUTO) return "auto"
+    val v = config.whiteBalanceValues.filterNotNull()
+    return when {
+        v.isEmpty() -> "auto"
+        v.size == 1 -> kelvinLabel(v.first())
+        else -> "${kelvinLabel(v.first())} → ${kelvinLabel(v.last())}"
+    }
+}
+
+fun kelvinLabel(k: Double): String = "${k.roundToInt()} K"
 
 /** Resolved value count for the three sweep axes; the scalar settings have none. */
 fun sectionCount(section: ConfigSection, config: SweepConfig): Int? = when (section) {
     ConfigSection.ISO -> config.isoValues.size
     ConfigSection.SHUTTER -> config.exposureValuesNs.size
     ConfigSection.FOCUS -> config.focusValues.size
+    ConfigSection.WHITE_BALANCE ->
+        if (config.whiteBalance.mode == WhiteBalanceMode.AUTO) null else config.whiteBalanceValues.size
     else -> null
 }
 
@@ -72,6 +92,15 @@ fun shutterLabel(ns: Long): String {
     val reciprocal = if (seconds > 0) (1.0 / seconds).roundToInt() else 0
     return "${trim(ms)} ms (1/$reciprocal s)"
 }
+
+/**
+ * Shutter speeds are stored in nanoseconds but entered and displayed in milliseconds. These two
+ * are inverses and must stay that way: when only the display side converted, typing "10" into the
+ * shutter field stored a 10 ns exposure that then clamped to the sensor's 85 us floor.
+ */
+fun shutterNsToMsText(ns: Double): String = trim(ns / 1e6)
+
+fun shutterMsTextToNs(text: String): Double? = text.toDoubleOrNull()?.times(1e6)
 
 /** Formats a number with up to 3 decimals, trimming trailing zeros: 100.0 -> "100", 0.085 -> "0.085". */
 fun trim(v: Double): String = "%.3f".format(v).trimEnd('0').trimEnd('.')

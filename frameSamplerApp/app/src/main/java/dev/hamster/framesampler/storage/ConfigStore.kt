@@ -12,6 +12,8 @@ import dev.hamster.framesampler.model.downscaleFactorsFor
 import dev.hamster.framesampler.model.nearestDownscaleFactor
 import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
+import dev.hamster.framesampler.model.WhiteBalanceAxis
+import dev.hamster.framesampler.model.WhiteBalanceMode
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,13 +22,19 @@ private const val KEY_CONFIG = "config_json"
 private const val TAG = "ConfigStore"
 
 /** Bumped when the stored shape changes. */
-private const val SCHEMA_VERSION = 2
+private const val SCHEMA_VERSION = 3
 
 /**
  * Version 1 stored the focus axis as a bare array of diopters. Those are explicit values, which
  * is exactly what List mode means, so a v1 payload is migrated rather than discarded.
  */
 private const val LEGACY_FOCUS_LIST_VERSION = 1
+
+/**
+ * Versions before 3 predate the white balance axis. Everything they stored was captured with AUTO
+ * behaviour, so a missing key restores to AUTO — which is exactly [WhiteBalanceAxis]'s default.
+ */
+private const val FIRST_WHITE_BALANCE_VERSION = 3
 
 /**
  * Persists the sweep configuration across app restarts.
@@ -51,6 +59,13 @@ class ConfigStore(context: Context) {
             put("focus", focusToJson(config.focus))
             put("framesToAverage", config.framesToAverage)
             put("settleFrames", config.settleFrames)
+            put("whiteBalance", JSONObject().apply {
+                put("mode", config.whiteBalance.mode.name)
+                put("list", JSONArray(config.whiteBalance.list))
+                put("startKelvin", config.whiteBalance.startKelvin)
+                put("endKelvin", config.whiteBalance.endKelvin)
+                put("count", config.whiteBalance.count)
+            })
             put("outputFormat", config.outputFormat.name)
             put("downscale", config.downscale)
         }
@@ -63,7 +78,7 @@ class ConfigStore(context: Context) {
         return try {
             val json = JSONObject(raw)
             val version = json.optInt("version")
-            if (version != SCHEMA_VERSION && version != LEGACY_FOCUS_LIST_VERSION) return null
+            if (version !in listOf(SCHEMA_VERSION, 2, LEGACY_FOCUS_LIST_VERSION)) return null
             if (json.optString("camera") != fingerprint(caps)) return null
 
             val format = OutputFormat.entries
@@ -79,6 +94,7 @@ class ConfigStore(context: Context) {
                 focus = focusFromJson(json.get("focus"), caps.minFocusDistanceDiopters.toDouble()),
                 framesToAverage = json.getInt("framesToAverage").coerceIn(1, 64),
                 settleFrames = json.getInt("settleFrames").coerceIn(0, 10),
+                whiteBalance = whiteBalanceFromJson(json.optJSONObject("whiteBalance")),
                 outputFormat = format,
                 downscale = nearestDownscaleFactor(json.optInt("downscale", 1), factors),
             ).takeIf { it.totalCaptures > 0 }
@@ -120,6 +136,19 @@ class ConfigStore(context: Context) {
             )
         }
         else -> FocusAxis(maxDiopters = maxDiopters)
+    }
+
+    /** A payload written before version [FIRST_WHITE_BALANCE_VERSION] has no key here: AUTO is right. */
+    private fun whiteBalanceFromJson(json: JSONObject?): WhiteBalanceAxis {
+        if (json == null) return WhiteBalanceAxis()
+        val default = WhiteBalanceAxis()
+        return WhiteBalanceAxis(
+            mode = WhiteBalanceMode.entries.firstOrNull { it.name == json.optString("mode") } ?: default.mode,
+            list = json.optJSONArray("list")?.let { doubleList(it) } ?: default.list,
+            startKelvin = json.optDouble("startKelvin", default.startKelvin),
+            endKelvin = json.optDouble("endKelvin", default.endKelvin),
+            count = json.optInt("count", default.count).coerceIn(1, 64),
+        )
     }
 
     private fun axisToJson(axis: GeometricAxis): JSONObject = JSONObject().apply {

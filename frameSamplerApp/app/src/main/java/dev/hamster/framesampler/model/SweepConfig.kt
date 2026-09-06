@@ -98,12 +98,20 @@ data class SweepConfig(
     val framesToAverage: Int = 1,
     val settleFrames: Int = 2,
     val outputFormat: OutputFormat = OutputFormat.JPEG,
+    /**
+     * Defaulted so every existing construction site keeps compiling and keeps AUTO behaviour:
+     * a default configuration captures exactly what it did before this axis existed.
+     */
+    val whiteBalance: WhiteBalanceAxis = WhiteBalanceAxis(),
     /** Integer box-downscale factor applied before encoding; 1 saves at full sensor resolution. */
     val downscale: Int = 1,
 ) {
     val isoValues: List<Int> get() = iso.values().map { it.roundToInt() }.distinct().sorted()
     val exposureValuesNs: List<Long> get() = exposure.values().map { it.roundToLong() }.distinct().sorted()
     val focusValues: List<Float> get() = focus.values().map { it.toFloat() }.distinct().sorted()
-    val totalCaptures: Int get() = isoValues.size * exposureValuesNs.size * focusValues.size
+    /** Colour temperatures in kelvin; a null element means the device's own white balance. */
+    val whiteBalanceValues: List<Double?> get() = whiteBalance.values()
+    val totalCaptures: Int
+        get() = isoValues.size * exposureValuesNs.size * focusValues.size * whiteBalanceValues.size
     val totalFrames: Int get() = totalCaptures * framesToAverage
 }

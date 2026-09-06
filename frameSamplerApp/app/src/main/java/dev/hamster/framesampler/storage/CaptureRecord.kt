@@ -18,4 +18,10 @@ data class CaptureRecord(
     val downscale: Int = 1,
     val outputWidth: Int = 0,
     val outputHeight: Int = 0,
+    /** Commanded colour temperature, or null when white balance was left on the device's AUTO. */
+    val requestedKelvin: Double? = null,
+    /** Gains actually applied, read back from the result: [r, gEven, gOdd, b]. Null if unreported. */
+    val actualColorGains: List<Float>? = null,
+    /** CONTROL_AWB_STATE from the result, for diagnosing an AUTO capture after the fact. */
+    val awbState: Int? = null,
 )

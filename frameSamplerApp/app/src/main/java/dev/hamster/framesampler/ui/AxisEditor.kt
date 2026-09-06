@@ -17,6 +17,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,6 +45,9 @@ import dev.hamster.framesampler.model.FocusPreset
 import dev.hamster.framesampler.model.focusBandsFor
 import dev.hamster.framesampler.model.focusPresets
 import dev.hamster.framesampler.model.DEFAULT_BAND_COUNT
+import dev.hamster.framesampler.model.WhiteBalanceAxis
+import dev.hamster.framesampler.model.WhiteBalanceMode
+import dev.hamster.framesampler.camera.kelvinToMired
 import dev.hamster.framesampler.model.downscaleFactorsFor
 import dev.hamster.framesampler.model.nearestDownscaleFactor
 import kotlin.math.roundToInt
@@ -154,6 +158,14 @@ fun GeometricAxisEditor(
     onAxisChange: (GeometricAxis) -> Unit,
     onPreset: (GeometricAxis) -> Unit,
     formatValue: (Double) -> String,
+    /**
+     * Inverse of [formatValue]: turns what the user typed back into the axis's storage unit.
+     *
+     * It must be supplied whenever [formatValue] converts units, or the field displays one unit
+     * and stores another. Shutter is stored in nanoseconds and shown in milliseconds, so typing
+     * "10" used to store a 10 ns exposure, which then clamped to the sensor's floor.
+     */
+    parseValue: (String) -> Double? = { it.toDoubleOrNull() },
     chipLabel: (Double) -> String,
 ) {
     val values = axis.values()
@@ -187,7 +199,7 @@ fun GeometricAxisEditor(
                     val parsed = newValue.text.split(",")
                         .map { it.trim() }
                         .filter { it.isNotEmpty() }
-                        .mapNotNull { it.toDoubleOrNull() }
+                        .mapNotNull(parseValue)
                     onAxisChange(axis.copy(list = parsed))
                 },
                 label = { Text("Values ($unitLabel), comma separated") },
@@ -220,7 +232,7 @@ fun GeometricAxisEditor(
                     value = startField,
                     onValueChange = { newValue ->
                         startField = newValue
-                        newValue.text.toDoubleOrNull()?.let { onAxisChange(axis.copy(start = it)) }
+                        parseValue(newValue.text)?.let { onAxisChange(axis.copy(start = it)) }
                     },
                     label = { Text("From") },
                     singleLine = true,
@@ -231,7 +243,7 @@ fun GeometricAxisEditor(
                     value = endField,
                     onValueChange = { newValue ->
                         endField = newValue
-                        newValue.text.toDoubleOrNull()?.let { onAxisChange(axis.copy(end = it)) }
+                        parseValue(newValue.text)?.let { onAxisChange(axis.copy(end = it)) }
                     },
                     label = { Text("To") },
                     singleLine = true,
@@ -396,6 +408,235 @@ private fun withBandCount(bands: FocusBandCounts, index: Int, value: Int): Focus
     1 -> bands.copy(far = value)
     2 -> bands.copy(mid = value)
     else -> bands.copy(near = value)
+}
+
+/** A named white balance preset, replacing the axis wholesale. */
+data class WhiteBalancePreset(val label: String, val axis: WhiteBalanceAxis)
+
+fun whiteBalancePresets(): List<WhiteBalancePreset> = listOf(
+    WhiteBalancePreset("Full range", WhiteBalanceAxis(WhiteBalanceMode.UNIFORM, startKelvin = 2000.0, endKelvin = 10000.0, count = 9)),
+    WhiteBalancePreset("Indoor", WhiteBalanceAxis(WhiteBalanceMode.UNIFORM, startKelvin = 2700.0, endKelvin = 4000.0, count = 5)),
+    WhiteBalancePreset("Daylight", WhiteBalanceAxis(WhiteBalanceMode.UNIFORM, startKelvin = 5000.0, endKelvin = 7000.0, count = 5)),
+)
+
+/**
+ * White balance: Auto, an explicit kelvin list, or a range spaced evenly in mired.
+ *
+ * Auto is the default and is deliberately inert — it commands no colour keys at all, so a sweep
+ * captures exactly what this app captured before the axis existed.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun WhiteBalanceEditor(
+    caps: CameraCapabilities,
+    axis: WhiteBalanceAxis,
+    accentColor: Color,
+    resetKey: Any,
+    onAxisChange: (WhiteBalanceAxis) -> Unit,
+    onPreset: (WhiteBalanceAxis) -> Unit,
+) {
+    val manual = caps.supportsManualPostProcessing
+    // A device without MANUAL_POST_PROCESSING cannot be told what gains to use, so the manual
+    // modes are not offered and any stored selection is pulled back to Auto.
+    LaunchedEffect(manual, axis.mode) {
+        if (!manual && axis.mode != WhiteBalanceMode.AUTO) {
+            onAxisChange(axis.copy(mode = WhiteBalanceMode.AUTO))
+        }
+    }
+
+    val isAuto = axis.mode == WhiteBalanceMode.AUTO
+
+    // Auto is not a third way of choosing values, it is the switch that decides whether values are
+    // chosen at all, so it gets its own control rather than a seat in the List/Uniform row.
+    // Turning it back off returns to whichever manual mode was last in use.
+    var lastManualMode by remember(resetKey) {
+        mutableStateOf(if (isAuto) WhiteBalanceMode.UNIFORM else axis.mode)
+    }
+    LaunchedEffect(axis.mode) {
+        if (axis.mode != WhiteBalanceMode.AUTO) lastManualMode = axis.mode
+    }
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = if (isAuto) accentColor.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+        border = if (isAuto) BorderStroke(2.dp, accentColor) else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Automatic",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isAuto) accentColor else MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "Let the camera choose, and hold it fixed for the sweep.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = isAuto,
+                enabled = manual,
+                onCheckedChange = { on ->
+                    onAxisChange(axis.copy(mode = if (on) WhiteBalanceMode.AUTO else lastManualMode))
+                },
+            )
+        }
+    }
+
+    if (!manual) {
+        Hint("This camera cannot be told which colour gains to use, so only Auto is available.")
+    }
+
+    if (!isAuto) {
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            listOf(WhiteBalanceMode.LIST, WhiteBalanceMode.UNIFORM).forEachIndexed { index, mode ->
+                SegmentedButton(
+                    selected = axis.mode == mode,
+                    onClick = { onAxisChange(axis.copy(mode = mode)) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+                    icon = {},
+                ) { Text(if (mode == WhiteBalanceMode.LIST) "List" else "Uniform") }
+            }
+        }
+    }
+
+    when (axis.mode) {
+        WhiteBalanceMode.AUTO -> {
+            Hint(
+                "Adds no frames. Manual sensor control switches the 3A pipeline off, so what the " +
+                    "frames carry is the balance the camera had settled on before the sweep " +
+                    "started, then frozen.",
+            )
+        }
+
+        WhiteBalanceMode.LIST -> {
+            WhiteBalancePresetRow(whiteBalancePresets(), accentColor, onPreset)
+            var field by remember(resetKey, axis.mode) {
+                val initial = axis.list.joinToString(", ") { it.roundToInt().toString() }
+                mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+            }
+            OutlinedTextField(
+                value = field,
+                onValueChange = { newValue ->
+                    field = newValue
+                    val parsed = newValue.text.split(",")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .mapNotNull { it.toDoubleOrNull() }
+                    onAxisChange(axis.copy(list = parsed))
+                },
+                label = { Text("Values (kelvin), comma separated") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Text),
+                maxLines = 2,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        WhiteBalanceMode.UNIFORM -> {
+            WhiteBalancePresetRow(whiteBalancePresets(), accentColor, onPreset)
+            var startField by remember(resetKey, axis.mode) {
+                val initial = axis.startKelvin.roundToInt().toString()
+                mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+            }
+            var endField by remember(resetKey, axis.mode) {
+                val initial = axis.endKelvin.roundToInt().toString()
+                mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+            }
+            var countField by remember(resetKey, axis.mode) {
+                val initial = axis.count.toString()
+                mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = startField,
+                    onValueChange = { newValue ->
+                        startField = newValue
+                        newValue.text.toDoubleOrNull()?.let { onAxisChange(axis.copy(startKelvin = it)) }
+                    },
+                    label = { Text("From K") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = endField,
+                    onValueChange = { newValue ->
+                        endField = newValue
+                        newValue.text.toDoubleOrNull()?.let { onAxisChange(axis.copy(endKelvin = it)) }
+                    },
+                    label = { Text("To K") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = countField,
+                    onValueChange = { newValue ->
+                        countField = newValue
+                        newValue.text.toIntOrNull()?.let { onAxisChange(axis.copy(count = it)) }
+                    },
+                    label = { Text("Steps") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(0.7f),
+                )
+            }
+        }
+    }
+
+    if (axis.mode != WhiteBalanceMode.AUTO) {
+        // Showing mired next to kelvin makes the even spacing visible in the chips themselves.
+        ValueChips(
+            axis.values().map { k ->
+                if (k == null) "Auto" else "${k.roundToInt()} K · ${kelvinToMired(k).roundToInt()} mired"
+            },
+            accentColor,
+        )
+        Hint(
+            "Spaced evenly in mired (10⁶/K), the unit in which equal steps are equal colour " +
+                "shifts — 1000 K at 2000 K is a large change, the same step at 9000 K is not.",
+        )
+        Hint(
+            "Kelvin is a nominal label on a family of channel gains, not a calibrated illuminant: " +
+                "the gains come from a black-body approximation, not this sensor's own colour " +
+                "calibration. The manifest records the gains actually applied.",
+        )
+    }
+}
+
+/** Accent-outlined white balance presets, the counterpart to [PresetRow]. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun WhiteBalancePresetRow(
+    presets: List<WhiteBalancePreset>,
+    accentColor: Color,
+    onPreset: (WhiteBalanceAxis) -> Unit,
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        presets.forEach { preset ->
+            Surface(
+                onClick = { onPreset(preset.axis) },
+                shape = RoundedCornerShape(50),
+                color = Color.Transparent,
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+            ) {
+                Text(
+                    preset.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accentColor,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
 }
 
 /** Two selectable cards, with the storage cost of the choice made visible before the sweep. */

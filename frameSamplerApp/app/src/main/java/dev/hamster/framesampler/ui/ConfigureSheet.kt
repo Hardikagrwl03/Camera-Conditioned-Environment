@@ -49,6 +49,7 @@ import dev.hamster.framesampler.camera.CameraCapabilities
 import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
 import dev.hamster.framesampler.model.SweepDefaults
+import dev.hamster.framesampler.model.WhiteBalanceMode
 import kotlin.math.roundToInt
 
 /**
@@ -132,7 +133,8 @@ fun ConfigSheet(
                         presets = shutterPresets(caps),
                         onAxisChange = { onConfigChange(config.copy(exposure = it)) },
                         onPreset = { onConfigChange(config.copy(exposure = it)); resetVersion++ },
-                        formatValue = { trim(it / 1e6) },
+                        formatValue = { shutterNsToMsText(it) },
+                        parseValue = { shutterMsTextToNs(it) },
                         chipLabel = { shutterLabel(it.toLong()) },
                     )
 
@@ -143,6 +145,15 @@ fun ConfigSheet(
                         resetKey = resetVersion,
                         onFocusChange = { onConfigChange(config.copy(focus = it)) },
                         onPreset = { onConfigChange(config.copy(focus = it)); resetVersion++ },
+                    )
+
+                    ConfigSection.WHITE_BALANCE -> WhiteBalanceEditor(
+                        caps = caps,
+                        axis = config.whiteBalance,
+                        accentColor = section.accent.color(),
+                        resetKey = resetVersion,
+                        onAxisChange = { onConfigChange(config.copy(whiteBalance = it)) },
+                        onPreset = { onConfigChange(config.copy(whiteBalance = it)); resetVersion++ },
                     )
 
                     ConfigSection.FORMAT -> FormatEditor(
@@ -263,6 +274,7 @@ private fun resetSection(
         ConfigSection.AVERAGE -> config.copy(framesToAverage = defaults.framesToAverage)
         ConfigSection.SETTLE -> config.copy(settleFrames = defaults.settleFrames)
         ConfigSection.DOWNSCALE -> config.copy(downscale = defaults.downscale)
+        ConfigSection.WHITE_BALANCE -> config.copy(whiteBalance = defaults.whiteBalance)
     }
 }
 
@@ -274,6 +286,9 @@ private fun sectionImpact(section: ConfigSection, draft: SweepConfig): String = 
     ConfigSection.AVERAGE -> "× ${draft.framesToAverage} per configuration"
     ConfigSection.SETTLE -> "${draft.settleFrames} settle frames"
     ConfigSection.DOWNSCALE -> if (draft.downscale == 1) "full resolution" else "${draft.downscale}x downscale"
+    ConfigSection.WHITE_BALANCE ->
+        if (draft.whiteBalance.mode == WhiteBalanceMode.AUTO) "auto white balance"
+        else "${draft.whiteBalanceValues.size} colour temperatures"
 }
 
 /**
