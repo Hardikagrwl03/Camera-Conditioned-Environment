@@ -38,13 +38,16 @@ enum class ConfigSection(
     val description: String,
     val accent: Accent,
 ) {
+    // Declaration order is the on-screen order: the tab grid chunks these into rows of four, so
+    // the four sweep axes sit on the top row and the per-frame output settings below them.
     ISO("ISO sensitivity", "ISO", "Sensor gain applied to each frame.", Accent.ISO),
     SHUTTER("Shutter speed", "Shutter", "How long each frame is exposed.", Accent.SHUTTER),
     FOCUS("Focus distance", "Focus", "Where the lens is focused, in diopters.", Accent.FOCUS),
-    FORMAT("Output format", "Format", "How each captured frame is encoded on disk.", Accent.FORMAT),
+    WHITE_BALANCE("White balance", "WB", "Colour temperature applied to each frame.", Accent.WHITE_BALANCE),
     AVERAGE("Frames to average", "Average", "Frames captured per configuration and averaged.", Accent.AVERAGE),
     SETTLE("Settle frames", "Settle", "Warm-up frames discarded after each settings change.", Accent.SETTLE),
     DOWNSCALE("Downscale", "Scale", "Shrinks each saved frame by averaging blocks of pixels.", Accent.DOWNSCALE),
+    FORMAT("Output format", "Format", "How each captured frame is encoded on disk.", Accent.FORMAT),
 }
 
 sealed interface UiState {

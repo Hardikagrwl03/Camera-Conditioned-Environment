@@ -10,7 +10,9 @@ import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.RggbChannelVector
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.ImageReader
 import android.os.Handler
@@ -215,13 +217,34 @@ class CameraController(private val cameraManager: CameraManager) {
         val clampedIso: Int,
         val clampedExposureNs: Long,
         val clampedFocus: Float,
+        /** Null when white balance was left on the device's AUTO, or the device cannot command it. */
+        val kelvin: Double?,
     )
+
+    /**
+     * A no-op colour matrix, so a white balance sweep varies the channel gains and nothing else.
+     * Rationals are (numerator, denominator) pairs in row-major order.
+     */
+    private val IDENTITY_COLOR_TRANSFORM = ColorSpaceTransform(
+        intArrayOf(
+            1, 1, 0, 1, 0, 1,
+            0, 1, 1, 1, 0, 1,
+            0, 1, 0, 1, 1, 1,
+        ),
+    )
+
+    /** Both green channels take the same gain: this axis is white balance, not a green split. */
+    private fun gainsFor(kelvin: Double): RggbChannelVector {
+        val (r, g, b) = kelvinToGains(kelvin)
+        return RggbChannelVector(r.toFloat(), g.toFloat(), g.toFloat(), b.toFloat())
+    }
 
     private fun buildManualRequest(
         targets: List<Surface>,
         isoValue: Int,
         exposureNs: Long,
         focusDiopters: Float,
+        kelvin: Double?,
         forStillCapture: Boolean,
     ): ManualCapture {
         val c = caps ?: error("Capabilities not loaded")
@@ -237,8 +260,22 @@ class CameraController(private val cameraManager: CameraManager) {
         b.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_OFF)
         b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
         b.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
-        b.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO)
-        b.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+        if (kelvin == null || !c.supportsManualPostProcessing) {
+            // The original behaviour, kept byte-for-byte. CONTROL_MODE is OFF above, which
+            // overrides these two, so what the frames actually carry is the white balance the HAL
+            // had converged to before the sweep took over — inherited, then held frozen. That is
+            // stable across a sweep, which is why it is the default and why it is not "fixed".
+            b.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO)
+            b.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+        } else {
+            // Only gains vary: the transform is pinned to identity so the sweep moves white
+            // balance alone rather than white balance and the colour matrix together.
+            b.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
+            b.set(CaptureRequest.CONTROL_AWB_LOCK, false)
+            b.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
+            b.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, IDENTITY_COLOR_TRANSFORM)
+            b.set(CaptureRequest.COLOR_CORRECTION_GAINS, gainsFor(kelvin))
+        }
         b.set(CaptureRequest.SENSOR_SENSITIVITY, clampedIso)
         b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, clampedExp)
         b.set(CaptureRequest.LENS_FOCUS_DISTANCE, clampedFocus)
@@ -251,7 +288,8 @@ class CameraController(private val cameraManager: CameraManager) {
         if (forStillCapture) {
             b.set(CaptureRequest.JPEG_QUALITY, 100.toByte())
         }
-        return ManualCapture(b.build(), clampedIso, clampedExp, clampedFocus)
+        val appliedKelvin = if (c.supportsManualPostProcessing) kelvin else null
+        return ManualCapture(b.build(), clampedIso, clampedExp, clampedFocus, appliedKelvin)
     }
 
     private suspend fun captureOne(request: CaptureRequest): TotalCaptureResult = suspendCancellableCoroutine { cont ->
@@ -293,11 +331,26 @@ class CameraController(private val cameraManager: CameraManager) {
         return result to frame
     }
 
-    private fun checkSettled(result: TotalCaptureResult, iso: Int, exposureNs: Long, focus: Float): Boolean {
+    private fun checkSettled(
+        result: TotalCaptureResult,
+        iso: Int,
+        exposureNs: Long,
+        focus: Float,
+        kelvin: Double?,
+    ): Boolean {
         val actualIso = result.get(CaptureResult.SENSOR_SENSITIVITY)
         val actualExp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
         val actualFocus = result.get(CaptureResult.LENS_FOCUS_DISTANCE)
         val lensState = result.get(CaptureResult.LENS_STATE)
+        // Only meaningful when gains were commanded; a null read is tolerated rather than
+        // reported as unsettled, the same way lensState is, because not every HAL populates
+        // this key in every result.
+        val gainsOk = if (kelvin == null) true else {
+            val expected = gainsFor(kelvin)
+            val actual = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
+            actual == null ||
+                (abs(actual.red - expected.red) < 0.01f && abs(actual.blue - expected.blue) < 0.01f)
+        }
         // Sensors quantize exposure time to a line-time step, so it rarely lands on the exact
         // requested nanosecond value even once fully settled — allow a small relative tolerance
         // (with an absolute floor for very short exposures) instead of exact equality.
@@ -305,23 +358,30 @@ class CameraController(private val cameraManager: CameraManager) {
         return actualIso == iso &&
             actualExp != null && abs(actualExp - exposureNs) <= expTolerance &&
             actualFocus != null && abs(actualFocus - focus) < 0.01f &&
-            (lensState == null || lensState == CameraMetadata.LENS_STATE_STATIONARY)
+            (lensState == null || lensState == CameraMetadata.LENS_STATE_STATIONARY) &&
+            gainsOk
     }
 
-    private suspend fun settle(iso: Int, exposureNs: Long, focus: Float, settleFrames: Int): Boolean {
+    private suspend fun settle(
+        iso: Int,
+        exposureNs: Long,
+        focus: Float,
+        kelvin: Double?,
+        settleFrames: Int,
+    ): Boolean {
         if (settleFrames <= 0) return true
         val surface = previewSurface ?: error("Preview surface not set")
-        val manual = buildManualRequest(listOf(surface), iso, exposureNs, focus, forStillCapture = false)
+        val manual = buildManualRequest(listOf(surface), iso, exposureNs, focus, kelvin, forStillCapture = false)
 
         var settled = false
         repeat(settleFrames) {
             val result = captureOne(manual.request)
-            settled = checkSettled(result, manual.clampedIso, manual.clampedExposureNs, manual.clampedFocus)
+            settled = checkSettled(result, manual.clampedIso, manual.clampedExposureNs, manual.clampedFocus, manual.kelvin)
         }
         var extra = 0
         while (!settled && extra < 8) {
             val result = captureOne(manual.request)
-            settled = checkSettled(result, manual.clampedIso, manual.clampedExposureNs, manual.clampedFocus)
+            settled = checkSettled(result, manual.clampedIso, manual.clampedExposureNs, manual.clampedFocus, manual.kelvin)
             extra++
         }
         return settled
@@ -361,63 +421,75 @@ class CameraController(private val cameraManager: CameraManager) {
             }
 
             var index = 0
+            // Focus stays outermost: moving the lens is the slowest transition. Colour gains
+            // apply within a frame or two, so white balance sits above the two electronic axes
+            // but below the mechanical one.
             for (focus in config.focusValues) {
-                for (iso in config.isoValues) {
-                    for (exposureNs in config.exposureValuesNs) {
-                        currentCoroutineContext().ensureActive()
+                for (kelvin in config.whiteBalanceValues) {
+                    for (iso in config.isoValues) {
+                        for (exposureNs in config.exposureValuesNs) {
+                            currentCoroutineContext().ensureActive()
 
-                        val settled = settle(iso, exposureNs, focus, config.settleFrames)
-                        if (!settled) unsettledCount++
+                            val settled = settle(iso, exposureNs, focus, kelvin, config.settleFrames)
+                            if (!settled) unsettledCount++
 
-                        val avg = averager
-                        avg?.reset()
-                        var firstResult: TotalCaptureResult? = null
-                        var singleFrame: CapturedFrame? = null
-                        var lastManual: ManualCapture? = null
+                            val avg = averager
+                            avg?.reset()
+                            var firstResult: TotalCaptureResult? = null
+                            var singleFrame: CapturedFrame? = null
+                            var lastManual: ManualCapture? = null
 
-                        for (frame in 0 until config.framesToAverage) {
-                            val manual = buildManualRequest(
-                                listOf(reader.surface), iso, exposureNs, focus, forStillCapture = true,
-                            )
-                            lastManual = manual
-                            val (result, captured) = captureFrame(manual.request)
-                            if (firstResult == null) firstResult = result
-                            if (avg != null) {
-                                avg.add(pixelsOf(captured))
-                            } else {
-                                singleFrame = captured
+                            for (frame in 0 until config.framesToAverage) {
+                                val manual = buildManualRequest(
+                                    listOf(reader.surface), iso, exposureNs, focus, kelvin, forStillCapture = true,
+                                )
+                                lastManual = manual
+                                val (result, captured) = captureFrame(manual.request)
+                                if (firstResult == null) firstResult = result
+                                if (avg != null) {
+                                    avg.add(pixelsOf(captured))
+                                } else {
+                                    singleFrame = captured
+                                }
                             }
-                        }
 
-                        val outputBytes = encodeOutput(
-                            avg = avg,
-                            singleFrame = singleFrame,
-                            fullSize = frameSize,
-                            format = config.outputFormat,
-                            downscale = config.downscale,
-                        )
-                        val manual = lastManual!!
-                        val result = firstResult!!
-                        val record = CaptureRecord(
-                            index = index,
-                            requestedIso = iso,
-                            actualIso = result.get(CaptureResult.SENSOR_SENSITIVITY),
-                            requestedExposureNs = exposureNs,
-                            actualExposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
-                            requestedFocusDiopters = focus,
-                            actualFocusDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE),
-                            framesAveraged = config.framesToAverage,
-                            extension = config.outputFormat.extension,
-                            downscale = config.downscale,
-                            outputWidth = downscaledSize(frameSize.width, frameSize.height, config.downscale).first,
-                            outputHeight = downscaledSize(frameSize.width, frameSize.height, config.downscale).second,
-                            settled = settled,
-                            timestampNs = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: System.nanoTime(),
-                        )
-                        onCaptureWritten(record, outputBytes)
-                        records += record
-                        index++
-                        onProgress(SweepProgress(index, total, manual.clampedIso, manual.clampedExposureNs, manual.clampedFocus, unsettledCount))
+                            val outputBytes = encodeOutput(
+                                avg = avg,
+                                singleFrame = singleFrame,
+                                fullSize = frameSize,
+                                format = config.outputFormat,
+                                downscale = config.downscale,
+                            )
+                            val manual = lastManual!!
+                            val result = firstResult!!
+                            val record = CaptureRecord(
+                                index = index,
+                                requestedIso = iso,
+                                actualIso = result.get(CaptureResult.SENSOR_SENSITIVITY),
+                                requestedExposureNs = exposureNs,
+                                actualExposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                                requestedFocusDiopters = focus,
+                                actualFocusDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE),
+                                framesAveraged = config.framesToAverage,
+                                extension = config.outputFormat.extension,
+                                downscale = config.downscale,
+                                outputWidth = downscaledSize(frameSize.width, frameSize.height, config.downscale).first,
+                                outputHeight = downscaledSize(frameSize.width, frameSize.height, config.downscale).second,
+                                settled = settled,
+                                timestampNs = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: System.nanoTime(),
+                                requestedKelvin = manual.kelvin,
+                                // The gains that actually reached the sensor. Analysis should use
+                                // these rather than the requested kelvin, which is only a nominal
+                                // label on the gain family (see WhiteBalance.kt).
+                                actualColorGains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
+                                    ?.let { listOf(it.red, it.greenEven, it.greenOdd, it.blue) },
+                                awbState = result.get(CaptureResult.CONTROL_AWB_STATE),
+                            )
+                            onCaptureWritten(record, outputBytes)
+                            records += record
+                            index++
+                            onProgress(SweepProgress(index, total, manual.clampedIso, manual.clampedExposureNs, manual.clampedFocus, unsettledCount))
+                        }
                     }
                 }
             }

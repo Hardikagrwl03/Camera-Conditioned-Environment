@@ -13,6 +13,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val SWEEP_ROOT_DIR_NAME = "FramesSweep"
 private const val JPEG_BYTES_PER_CAPTURE = 5L * 1024 * 1024
@@ -83,6 +84,8 @@ class SweepStorage {
                 put("isoValues", JSONArray(config.isoValues))
                 put("exposureValuesNs", JSONArray(config.exposureValuesNs))
                 put("focusValuesDiopters", JSONArray(config.focusValues.map { it.toDouble() }))
+                put("whiteBalanceMode", config.whiteBalance.mode.name)
+                put("whiteBalanceKelvin", JSONArray(config.whiteBalanceValues.map { it ?: JSONObject.NULL }))
                 put("outputFormat", config.outputFormat.label)
                 put("downscale", config.downscale)
                 put("framesToAverage", config.framesToAverage)
@@ -110,6 +113,10 @@ class SweepStorage {
         put("framesAveraged", r.framesAveraged)
         put("downscale", r.downscale)
         put("outputSize", "${r.outputWidth}x${r.outputHeight}")
+        put("requestedKelvin", r.requestedKelvin ?: JSONObject.NULL)
+        // What the sensor actually applied; the requested kelvin is only a nominal label.
+        put("actualColorGains", r.actualColorGains?.let { JSONArray(it.map { g -> g.toDouble() }) } ?: JSONObject.NULL)
+        put("awbState", r.awbState ?: JSONObject.NULL)
         put("settled", r.settled)
         put("timestampNs", r.timestampNs)
     }
@@ -118,7 +125,8 @@ class SweepStorage {
         val sb = StringBuilder()
         sb.append("index,filename,requestedIso,actualIso,requestedExposureNs,actualExposureNs,")
             .append("requestedFocusDiopters,actualFocusDiopters,framesAveraged,downscale,")
-            .append("outputWidth,outputHeight,settled,timestampNs\n")
+            .append("outputWidth,outputHeight,requestedKelvin,gainR,gainGEven,gainGOdd,gainB,")
+            .append("awbState,settled,timestampNs\n")
         records.forEach { r ->
             sb.append(r.index).append(',')
                 .append(filenameFor(r)).append(',')
@@ -132,6 +140,12 @@ class SweepStorage {
                 .append(r.downscale).append(',')
                 .append(r.outputWidth).append(',')
                 .append(r.outputHeight).append(',')
+                .append(r.requestedKelvin?.let { "%.0f".format(it) } ?: "").append(',')
+                .append(r.actualColorGains?.getOrNull(0) ?: "").append(',')
+                .append(r.actualColorGains?.getOrNull(1) ?: "").append(',')
+                .append(r.actualColorGains?.getOrNull(2) ?: "").append(',')
+                .append(r.actualColorGains?.getOrNull(3) ?: "").append(',')
+                .append(r.awbState ?: "").append(',')
                 .append(r.settled).append(',')
                 .append(r.timestampNs).append('\n')
         }
@@ -144,14 +158,21 @@ class SweepStorage {
     }
 
     companion object {
-        /** iso<ISO>_exp<EXPOSURE_US>us_fd<FOCUS_DIOPTERS>D_avg<N>_ds<FACTOR>_<INDEX>.<ext> */
+        /**
+         * iso<ISO>_exp<EXPOSURE_US>us_fd<FOCUS_DIOPTERS>D[_wb<KELVIN>K]_avg<N>_ds<FACTOR>_<INDEX>.<ext>
+         *
+         * The wb token appears **only** when white balance was actually swept. On the AUTO path it
+         * is omitted entirely, so a default configuration produces exactly the filenames it did
+         * before the white balance axis existed and existing analysis scripts keep working.
+         */
         fun filenameFor(record: CaptureRecord): String {
             val isoStr = record.requestedIso.toString().padStart(4, '0')
             val expUs = record.requestedExposureNs / 1000
             val expStr = expUs.toString().padStart(6, '0')
             val fdStr = String.format(Locale.US, "%.2f", record.requestedFocusDiopters).replace('.', 'p')
+            val wbStr = record.requestedKelvin?.let { "_wb${it.roundToInt()}K" } ?: ""
             val idxStr = record.index.toString().padStart(4, '0')
-            return "iso${isoStr}_exp${expStr}us_fd${fdStr}D_avg${record.framesAveraged}" +
+            return "iso${isoStr}_exp${expStr}us_fd${fdStr}D${wbStr}_avg${record.framesAveraged}" +
                 "_ds${record.downscale}_$idxStr.${record.extension}"
         }
     }

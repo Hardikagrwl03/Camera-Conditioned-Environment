@@ -1,5 +1,7 @@
 package dev.hamster.framesampler.model
 
+import dev.hamster.framesampler.ui.shutterMsTextToNs
+import dev.hamster.framesampler.ui.shutterNsToMsText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +36,28 @@ class SweepConfigTest {
         assertEquals(10, config.focusValues.size)
         assertEquals(1000, config.totalCaptures)
         assertEquals(1000, config.totalFrames)
+    }
+
+    @Test
+    fun defaultConfig_isAutoAndDoesNotChangeFrameCount() {
+        // White balance must multiply by exactly one until the user opts in, so adding the axis
+        // cannot have changed what an existing configuration captures.
+        val config = defaultLikeConfig()
+        assertEquals(WhiteBalanceMode.AUTO, config.whiteBalance.mode)
+        assertEquals(1, config.whiteBalanceValues.size)
+        assertEquals(10 * 10 * 10, config.totalCaptures)
+    }
+
+    @Test
+    fun totalCaptures_multipliesByWhiteBalance() {
+        val config = defaultLikeConfig().copy(
+            iso = GeometricAxis(mode = AxisMode.LIST, list = listOf(100.0, 200.0)),
+            exposure = GeometricAxis(mode = AxisMode.LIST, list = listOf(1e6, 2e6, 3e6)),
+            focus = FocusAxis(mode = AxisMode.LIST, list = listOf(0.0, 1.0, 2.0, 3.0), maxDiopters = 10.0),
+            whiteBalance = WhiteBalanceAxis(mode = WhiteBalanceMode.UNIFORM, count = 5),
+        )
+        assertEquals(5, config.whiteBalanceValues.size)
+        assertEquals(2 * 3 * 4 * 5, config.totalCaptures)
     }
 
     @Test
@@ -73,6 +97,31 @@ class SweepConfigTest {
         assertEquals(6, nearestDownscaleFactor(8, factors))
         assertEquals(10, nearestDownscaleFactor(9, factors))
         assertEquals(4, nearestDownscaleFactor(4, factors))
+    }
+
+    // ---- shutter unit round-trip ----
+
+    @Test
+    fun shutterMsAndNsAreInverses() {
+        // The display side alone used to convert: typing "10" meant 10 ms on screen but stored a
+        // 10 ns exposure, which clamped to the sensor floor. These two must stay inverses.
+        for (ms in listOf(0.085, 0.1, 1.0, 10.0, 20.0, 100.0)) {
+            val ns = shutterMsTextToNs(ms.toString())!!
+            assertEquals(ms * 1e6, ns, 1e-6)
+            assertEquals(ms, shutterNsToMsText(ns).toDouble(), 1e-6)
+        }
+    }
+
+    @Test
+    fun shutterMsTextRejectsNonNumbers() {
+        assertEquals(null, shutterMsTextToNs(""))
+        assertEquals(null, shutterMsTextToNs("abc"))
+    }
+
+    @Test
+    fun shutterTwentyMillisecondsStoresTwentyMillionNanoseconds() {
+        // The exact case that failed on device: 20 ms must not become a 20 ns request.
+        assertEquals(20_000_000.0, shutterMsTextToNs("20")!!, 1e-9)
     }
 
     // ---- banded focus sampling ----

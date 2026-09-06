@@ -19,7 +19,8 @@ enum class Accent(private val light: Color, private val dark: Color) {
     FORMAT(Color(0xFF2E7D32), Color(0xFF81C784)),
     AVERAGE(Color(0xFFC2185B), Color(0xFFF48FB1)),
     SETTLE(Color(0xFF1565C0), Color(0xFF90CAF9)),
-    DOWNSCALE(Color(0xFF00695C), Color(0xFF4DB6AC));
+    DOWNSCALE(Color(0xFF00695C), Color(0xFF4DB6AC)),
+    WHITE_BALANCE(Color(0xFFB8860B), Color(0xFFFFD54F));
 
     @Composable
     fun color(): Color = if (isSystemInDarkTheme()) dark else light
