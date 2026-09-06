@@ -72,7 +72,7 @@ fun PermissionGate(content: @Composable () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Frame Sampler needs two permissions", style = MaterialTheme.typography.headlineSmall)
+        Text("Lattice needs two permissions", style = MaterialTheme.typography.headlineSmall)
         androidx.compose.foundation.layout.Spacer(Modifier.padding(8.dp))
         if (!cameraGranted) {
             Text("Camera access — to show the live preview and capture the sweep.")
@@ -81,7 +81,7 @@ fun PermissionGate(content: @Composable () -> Unit) {
             }
         }
         if (!filesGranted) {
-            Text("All files access — to save images to /sdcard/FramesSweep.")
+            Text("All files access — to save images to /sdcard/Lattice.")
             Button(onClick = {
                 val intent = Intent(
                     Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
