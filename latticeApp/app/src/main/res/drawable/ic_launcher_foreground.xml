@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Three captured frames in a cascade, each brighter than the one behind it, the front
+  one pierced by a lens. That is what the app does: it holds the camera fixed and takes
+  a whole series of frames, one per point in the settings grid.
+
+  Aperture and lens-dial motifs were tried first and dropped. An iris is the most
+  camera-like mark available, but aperture is the one parameter this fixed f/1.8 rig
+  cannot sweep, so it would advertise a feature that does not exist.
+
+  All three frames carry the same evenOdd cut-out so the lens punches through to the
+  background gradient. Cutting only the front frame exposes the one behind it and the
+  lens fills with a half-tone instead of reading as an opening.
+
+  Frame corners reach 31.5 of the 36 unit round-mask safe radius, so nothing clips.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M36.00,30.00L58.00,30.00A6.00,6.00 0 0,1 64.00,36.00L64.00,58.00A6.00,6.00 0 0,1 58.00,64.00L36.00,64.00A6.00,6.00 0 0,1 30.00,58.00L30.00,36.00A6.00,6.00 0 0,1 36.00,30.00ZM61.00,54.50a6.50,6.50 0 1,0 0,13.00a6.50,6.50 0 1,0 0,-13.00Z"
+        android:fillColor="#FFECF4F4"
+        android:fillAlpha="0.28"
+        android:fillType="evenOdd" />
+    <path
+        android:pathData="M43.00,37.00L65.00,37.00A6.00,6.00 0 0,1 71.00,43.00L71.00,65.00A6.00,6.00 0 0,1 65.00,71.00L43.00,71.00A6.00,6.00 0 0,1 37.00,65.00L37.00,43.00A6.00,6.00 0 0,1 43.00,37.00ZM61.00,54.50a6.50,6.50 0 1,0 0,13.00a6.50,6.50 0 1,0 0,-13.00Z"
+        android:fillColor="#FFECF4F4"
+        android:fillAlpha="0.55"
+        android:fillType="evenOdd" />
+    <path
+        android:pathData="M50.00,44.00L72.00,44.00A6.00,6.00 0 0,1 78.00,50.00L78.00,72.00A6.00,6.00 0 0,1 72.00,78.00L50.00,78.00A6.00,6.00 0 0,1 44.00,72.00L44.00,50.00A6.00,6.00 0 0,1 50.00,44.00ZM61.00,54.50a6.50,6.50 0 1,0 0,13.00a6.50,6.50 0 1,0 0,-13.00Z"
+        android:fillColor="#FFECF4F4"
+        android:fillAlpha="1.00"
+        android:fillType="evenOdd" />
+</vector>

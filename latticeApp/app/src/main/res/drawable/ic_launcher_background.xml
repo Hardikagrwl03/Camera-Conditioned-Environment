@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Deep petrol teal, picked over graphite, bronze and forest. Graphite is close enough to a
+  dark wallpaper to lose its edge on a home screen; bronze reads dated; forest muddies in the
+  mid-tones where the translucent frames sit. Teal keeps contrast against the near-white
+  frames at 96px and matches the shutter accent already used in the app.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="108" android:endY="108">
+                <item android:offset="0" android:color="#FF12464F" />
+                <item android:offset="1" android:color="#FF072027" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
