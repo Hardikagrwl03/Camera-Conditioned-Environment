@@ -1,15 +1,32 @@
 # Lattice — User Guide
 
 Lattice takes the camera off automatic and sweeps a grid of settings, saving one frame per point
-along with a record of what the sensor actually applied.
+along with a record of what the sensor actually applied. It is built for a fixed rig: put the phone
+on a mount, point it at your subject, and let it work through every combination you asked for.
 
 If you want the reasoning behind *why* each axis is sampled the way it is — the optics, the
-hardware probes and the formulas — see [EXPERIMENTS.md](EXPERIMENTS.md). It is built for a fixed rig: put the phone
-on a mount, point it at your subject, and let it work through every combination you asked for.
+hardware probes and the formulas — see [EXPERIMENTS.md](EXPERIMENTS.md).
 
 ---
 
-## 1. Before your first sweep
+## 1. Installing
+
+Download the `.apk` from the **[latest release](https://github.com/Hardikagrwl03/Camera-Conditioned-Environment/releases/latest)**.
+
+**Lattice requires Android 15 or newer.** On anything older the install fails with an unhelpful
+message — that is the most common reason it will not install.
+
+Because it comes from outside the Play Store your phone will ask permission to install it. Allow
+installing from unknown sources when prompted; Play Protect may also warn about a sideloaded app,
+which is expected.
+
+Your camera also needs to report **manual sensor control**, or the ISO, shutter and focus values
+are ignored by the device and the app can do very little. Lattice warns you on the preview screen
+if so. Sweeping white balance additionally needs manual post-processing support.
+
+---
+
+## 2. Before your first sweep
 
 On first launch Lattice shows a permission screen with a button for each of the two it needs:
 
@@ -28,7 +45,7 @@ enough room, but it is easier to clear space before you have configured everythi
 
 ---
 
-## 2. The main screen
+## 3. The main screen
 
 The preview fills the top. Below it are eight tiles in two rows:
 
@@ -50,7 +67,7 @@ will produce and roughly how long it will take.
 
 ---
 
-## 3. The four sweep axes
+## 4. The four sweep axes
 
 Three of the four share the same two modes:
 
@@ -114,7 +131,7 @@ Range is 2 000–25 000 K. Presets: **Full range**, **Indoor**, **Daylight**.
 
 ---
 
-## 4. The four per-frame settings
+## 5. The four per-frame settings
 
 ### Average (1–64)
 
@@ -160,7 +177,7 @@ values are **not** linear in scene radiance. Keep that in mind before doing phot
 
 ---
 
-## 5. Running a sweep
+## 6. Running a sweep
 
 Press the shutter button. Lattice checks free space, creates a session directory, and works
 through the grid, showing progress and the settings currently being applied.
@@ -187,7 +204,7 @@ checks first and refuses rather than filling the disk.
 
 ---
 
-## 6. What you get
+## 7. What you get
 
 Each sweep writes one directory:
 
@@ -241,7 +258,7 @@ settled, timestampNs
 
 ---
 
-## 7. Reading the results
+## 8. Reading the results
 
 **Always analyse the `actual` columns, never the `requested` ones.** Hardware quantizes: exposure
 snaps to a line-time step, the focus actuator has a finite grid, and colour gains may be clamped.
@@ -257,7 +274,7 @@ on a manual sweep it reads inactive because the automatic algorithm is switched 
 
 ---
 
-## 8. Things worth knowing
+## 9. Things worth knowing
 
 **Auto white balance is inherited, not live.** Manual sensor control switches Android's whole 3A
 pipeline off. On Auto, the frames carry whatever white balance the camera had settled on *before*
@@ -276,7 +293,7 @@ the values would be meaningless.
 
 ---
 
-## 9. Some worked configurations
+## 10. Some worked configurations
 
 The defaults are a general-purpose mesh: **9 ISO × 9 shutter × 10 focus × Auto = 810 frames**, at
 2× scale in PNG. Each recipe below changes only what it lists.

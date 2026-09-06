@@ -8,6 +8,25 @@ Four axes are swept: **ISO × shutter × focus distance × white balance**. Sess
 `/sdcard/Lattice/<YYYYMMDD_HHmmss>/`, one directory per sweep, each holding the frames, a
 `manifest.json` and a `metadata.csv`.
 
+## Download
+
+[![Latest release](https://img.shields.io/github/v/release/Hardikagrwl03/Camera-Conditioned-Environment?label=latest&color=2ea44f)](https://github.com/Hardikagrwl03/Camera-Conditioned-Environment/releases/latest)
+
+**[Get the latest release](https://github.com/Hardikagrwl03/Camera-Conditioned-Environment/releases/latest)**
+and download the `.apk` attached to it — or browse
+[all releases](https://github.com/Hardikagrwl03/Camera-Conditioned-Environment/releases).
+
+Requires **Android 15 or newer**. Allow installing from unknown sources, then grant Camera and
+all-files access using the buttons the app shows on first launch. Your camera must report
+`MANUAL_SENSOR` or the sweep values are ignored by the device.
+
+> The link above points at the release *page* rather than straight at the file, deliberately.
+> GitHub's `/releases/latest/download/<name>` shortcut needs the exact asset filename, so a direct
+> link to `Lattice-1.1.apk` starts returning 404 the moment `Lattice-1.2.apk` is published. Attach
+> a stably-named `Lattice.apk` to every release if you want a direct link that never rots.
+
+---
+
 - **Using the app?** Start with the [user guide](USER_GUIDE.md).
 - **Design history?** Every feature has a plan in [plans/](plans/), including the deviations that
   came up during implementation and why.
