@@ -76,8 +76,19 @@ fun shutterLabel(ns: Long): String {
 /** Formats a number with up to 3 decimals, trimming trailing zeros: 100.0 -> "100", 0.085 -> "0.085". */
 fun trim(v: Double): String = "%.3f".format(v).trimEnd('0').trimEnd('.')
 
-fun diopterLabel(d: Double): String =
-    if (d <= 0.0) "0 D (∞)" else "%.2f D (%.2f m)".format(d, 1.0 / d)
+/**
+ * "0 D (∞)", "1.00 D (1.00 m)". Values below 0.1 D need three decimals or the two far bands
+ * collapse onto the same label — the 100 m - ∞ band all reads "0.00 D", and 0.013 D and 0.018 D
+ * both read "0.01 D" at different distances. Distances of 10 m and up drop their decimals, which
+ * would otherwise read as false precision on bands only a few lens positions wide.
+ */
+fun diopterLabel(d: Double): String {
+    if (d <= 0.0) return "0 D (∞)"
+    val metres = 1.0 / d
+    val diopters = if (d < 0.1) "%.3f".format(d) else "%.2f".format(d)
+    val distance = if (metres >= 10.0) "${metres.roundToInt()} m" else "%.2f m".format(metres)
+    return "$diopters D ($distance)"
+}
 
 /** Rough wall-clock estimate for a whole sweep: exposure plus fixed per-frame overhead. */
 fun estimatedDuration(config: SweepConfig): String {

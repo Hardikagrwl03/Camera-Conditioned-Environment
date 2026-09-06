@@ -5,7 +5,9 @@ import android.util.Log
 import dev.hamster.framesampler.camera.CameraCapabilities
 import dev.hamster.framesampler.model.AxisMode
 import dev.hamster.framesampler.model.GeometricAxis
-import dev.hamster.framesampler.model.LinearListAxis
+import dev.hamster.framesampler.model.DEFAULT_BAND_COUNT
+import dev.hamster.framesampler.model.FocusAxis
+import dev.hamster.framesampler.model.FocusBandCounts
 import dev.hamster.framesampler.model.downscaleFactorsFor
 import dev.hamster.framesampler.model.nearestDownscaleFactor
 import dev.hamster.framesampler.model.OutputFormat
@@ -17,8 +19,14 @@ private const val PREFS_NAME = "sweep_config"
 private const val KEY_CONFIG = "config_json"
 private const val TAG = "ConfigStore"
 
-/** Bumped when the stored shape changes; older payloads are discarded rather than migrated. */
-private const val SCHEMA_VERSION = 1
+/** Bumped when the stored shape changes. */
+private const val SCHEMA_VERSION = 2
+
+/**
+ * Version 1 stored the focus axis as a bare array of diopters. Those are explicit values, which
+ * is exactly what List mode means, so a v1 payload is migrated rather than discarded.
+ */
+private const val LEGACY_FOCUS_LIST_VERSION = 1
 
 /**
  * Persists the sweep configuration across app restarts.
@@ -40,7 +48,7 @@ class ConfigStore(context: Context) {
             put("camera", fingerprint(caps))
             put("iso", axisToJson(config.iso))
             put("exposure", axisToJson(config.exposure))
-            put("focus", JSONArray(config.focus.list))
+            put("focus", focusToJson(config.focus))
             put("framesToAverage", config.framesToAverage)
             put("settleFrames", config.settleFrames)
             put("outputFormat", config.outputFormat.name)
@@ -54,7 +62,8 @@ class ConfigStore(context: Context) {
         val raw = prefs.getString(KEY_CONFIG, null) ?: return null
         return try {
             val json = JSONObject(raw)
-            if (json.optInt("version") != SCHEMA_VERSION) return null
+            val version = json.optInt("version")
+            if (version != SCHEMA_VERSION && version != LEGACY_FOCUS_LIST_VERSION) return null
             if (json.optString("camera") != fingerprint(caps)) return null
 
             val format = OutputFormat.entries
@@ -67,7 +76,7 @@ class ConfigStore(context: Context) {
             SweepConfig(
                 iso = axisFromJson(json.getJSONObject("iso")),
                 exposure = axisFromJson(json.getJSONObject("exposure")),
-                focus = LinearListAxis(doubleList(json.getJSONArray("focus"))),
+                focus = focusFromJson(json.get("focus"), caps.minFocusDistanceDiopters.toDouble()),
                 framesToAverage = json.getInt("framesToAverage").coerceIn(1, 64),
                 settleFrames = json.getInt("settleFrames").coerceIn(0, 10),
                 outputFormat = format,
@@ -80,6 +89,38 @@ class ConfigStore(context: Context) {
     }
 
     fun clear() = prefs.edit().remove(KEY_CONFIG).apply()
+
+    private fun focusToJson(focus: FocusAxis): JSONObject = JSONObject().apply {
+        put("mode", focus.mode.name)
+        put("list", JSONArray(focus.list))
+        put("bands", JSONArray(focus.bands.asList()))
+    }
+
+    /**
+     * Accepts both shapes: a v2 object, or a v1 bare array which becomes an explicit List axis.
+     *
+     * [maxDiopters] always comes from the live camera rather than the payload. The fingerprint
+     * already guarantees the two agree, and reading it from caps means a stored configuration can
+     * never carry a stale lens limit.
+     */
+    private fun focusFromJson(raw: Any?, maxDiopters: Double): FocusAxis = when (raw) {
+        is JSONArray -> FocusAxis(
+            mode = AxisMode.LIST,
+            list = doubleList(raw),
+            maxDiopters = maxDiopters,
+        )
+        is JSONObject -> {
+            val counts = raw.optJSONArray("bands")
+            fun band(i: Int) = counts?.optInt(i, DEFAULT_BAND_COUNT)?.coerceAtLeast(0) ?: DEFAULT_BAND_COUNT
+            FocusAxis(
+                mode = AxisMode.entries.firstOrNull { it.name == raw.optString("mode") } ?: AxisMode.RANGE,
+                list = raw.optJSONArray("list")?.let { doubleList(it) } ?: emptyList(),
+                bands = FocusBandCounts(band(0), band(1), band(2), band(3)),
+                maxDiopters = maxDiopters,
+            )
+        }
+        else -> FocusAxis(maxDiopters = maxDiopters)
+    }
 
     private fun axisToJson(axis: GeometricAxis): JSONObject = JSONObject().apply {
         put("mode", axis.mode.name)

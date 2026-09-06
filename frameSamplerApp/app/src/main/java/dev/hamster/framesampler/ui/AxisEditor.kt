@@ -36,10 +36,14 @@ import androidx.compose.ui.unit.dp
 import dev.hamster.framesampler.camera.CameraCapabilities
 import dev.hamster.framesampler.model.AxisMode
 import dev.hamster.framesampler.model.GeometricAxis
-import dev.hamster.framesampler.model.LinearListAxis
 import dev.hamster.framesampler.model.OutputFormat
 import dev.hamster.framesampler.model.SweepConfig
-import dev.hamster.framesampler.model.SweepDefaults
+import dev.hamster.framesampler.model.FocusAxis
+import dev.hamster.framesampler.model.FocusBandCounts
+import dev.hamster.framesampler.model.FocusPreset
+import dev.hamster.framesampler.model.focusBandsFor
+import dev.hamster.framesampler.model.focusPresets
+import dev.hamster.framesampler.model.DEFAULT_BAND_COUNT
 import dev.hamster.framesampler.model.downscaleFactorsFor
 import dev.hamster.framesampler.model.nearestDownscaleFactor
 import kotlin.math.roundToInt
@@ -129,7 +133,7 @@ fun ValueChips(labels: List<String>, accentColor: Color) {
 }
 
 /**
- * Editor for one geometric sweep axis (ISO or shutter): a List/Geometric toggle, presets, the
+ * Editor for one geometric sweep axis (ISO or shutter): a List/Uniform toggle, presets, the
  * matching inputs, and every resolved value as a chip.
  *
  * Each text field owns a local [TextFieldValue] buffer keyed by [resetKey] (bumped only on a
@@ -165,7 +169,7 @@ fun GeometricAxisEditor(
             onClick = { onAxisChange(axis.copy(mode = AxisMode.RANGE)) },
             shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
             icon = {},
-        ) { Text("Geometric") }
+        ) { Text("Uniform") }
     }
 
     PresetRow(presets, accentColor, onPreset)
@@ -253,38 +257,20 @@ fun GeometricAxisEditor(
     Hint(supportedHint)
 }
 
-/** Focus is an explicit diopter list, with a slider to space N values evenly — no keyboard needed. */
+/** Accent-outlined band-count presets, the focus counterpart to [PresetRow]. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun FocusAxisEditor(
-    caps: CameraCapabilities,
-    focus: LinearListAxis,
-    accentColor: Color,
-    resetKey: Any,
-    onFocusChange: (LinearListAxis) -> Unit,
-    onFocusGenerated: (LinearListAxis) -> Unit,
-) {
-    if (caps.minFocusDistanceDiopters <= 0f) {
-        Hint("This camera has a fixed-focus lens.")
-        return
-    }
-    val values = focus.values()
-    val maxD = caps.minFocusDistanceDiopters
-
+fun FocusPresetRow(presets: List<FocusPreset>, accentColor: Color, onPreset: (FocusBandCounts) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(
-            "Infinity only" to listOf(0.0),
-            "Near + far" to listOf(0.0, maxD.toDouble()),
-            "10 evenly" to SweepDefaults.defaultFocusValuesForDiopters(maxD, 10),
-        ).forEach { (label, list) ->
+        presets.forEach { preset ->
             Surface(
-                onClick = { onFocusGenerated(LinearListAxis(list)) },
+                onClick = { onPreset(preset.counts) },
                 shape = RoundedCornerShape(50),
                 color = Color.Transparent,
                 border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
             ) {
                 Text(
-                    label,
+                    preset.label,
                     style = MaterialTheme.typography.labelMedium,
                     color = accentColor,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -292,48 +278,124 @@ fun FocusAxisEditor(
             }
         }
     }
+}
 
-    var field by remember(resetKey) {
-        val initial = focus.list.joinToString(", ") { "%.2f".format(it) }
-        mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+/**
+ * Focus editor: an explicit diopter list, or a set built from one count per distance band.
+ *
+ * Uniform mode divides the range at 1 m, 10 m and 100 m and spaces each band geometrically in
+ * distance, so a fixed count per band means a fixed *ratio* between neighbouring distances rather
+ * than a fixed number of metres. The boundaries themselves are always included, so no band can be
+ * turned off entirely.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun FocusAxisEditor(
+    caps: CameraCapabilities,
+    focus: FocusAxis,
+    accentColor: Color,
+    resetKey: Any,
+    onFocusChange: (FocusAxis) -> Unit,
+    onPreset: (FocusAxis) -> Unit,
+) {
+    if (caps.minFocusDistanceDiopters <= 0f) {
+        Hint("This camera has a fixed-focus lens.")
+        return
     }
-    OutlinedTextField(
-        value = field,
-        onValueChange = { newValue ->
-            field = newValue
-            val parsed = newValue.text.split(",")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .mapNotNull { it.toDoubleOrNull() }
-            onFocusChange(LinearListAxis(parsed))
-        },
-        label = { Text("Values (diopters), comma separated") },
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Text),
-        maxLines = 2,
-        modifier = Modifier.fillMaxWidth(),
-    )
+    val values = focus.values()
+    val maxD = focus.maxDiopters
+    val bands = focusBandsFor(maxD)
 
-    var sliderCount by remember(resetKey) { mutableStateOf(values.size.coerceIn(1, 20).toFloat()) }
-    Text(
-        "Space ${sliderCount.roundToInt()} evenly",
-        style = MaterialTheme.typography.labelLarge,
-        color = accentColor,
-    )
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Slider(
-            value = sliderCount,
-            onValueChange = { sliderCount = it },
-            valueRange = 1f..20f,
-            steps = 18,
-            modifier = Modifier.weight(1f),
-        )
-        OutlinedButton(onClick = {
-            onFocusGenerated(LinearListAxis(SweepDefaults.defaultFocusValuesForDiopters(maxD, sliderCount.roundToInt())))
-        }) { Text("Apply") }
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        SegmentedButton(
+            selected = focus.mode == AxisMode.LIST,
+            onClick = { onFocusChange(focus.copy(mode = AxisMode.LIST)) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+            icon = {},
+        ) { Text("List") }
+        SegmentedButton(
+            selected = focus.mode == AxisMode.RANGE,
+            onClick = { onFocusChange(focus.copy(mode = AxisMode.RANGE)) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+            icon = {},
+        ) { Text("Uniform") }
+    }
+
+    when (focus.mode) {
+        AxisMode.LIST -> {
+            // Keyed by mode as well as resetKey so switching away and back rebuilds the buffer
+            // from the axis rather than showing a stale string.
+            var field by remember(resetKey, focus.mode) {
+                val initial = focus.list.joinToString(", ") { "%.3f".format(it) }
+                mutableStateOf(TextFieldValue(initial, selection = TextRange(initial.length)))
+            }
+            OutlinedTextField(
+                value = field,
+                onValueChange = { newValue ->
+                    field = newValue
+                    val parsed = newValue.text.split(",")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .mapNotNull { it.toDoubleOrNull() }
+                    onFocusChange(focus.copy(list = parsed))
+                },
+                label = { Text("Values (diopters), comma separated") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Text),
+                maxLines = 2,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        AxisMode.RANGE -> {
+            FocusPresetRow(focusPresets(), accentColor) { onPreset(focus.copy(bands = it)) }
+
+            val counts = focus.bands.asList()
+            bands.forEachIndexed { index, band ->
+                val count = counts.getOrElse(index) { DEFAULT_BAND_COUNT }
+                    .coerceIn(0, band.interiorCapacity)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(band.label, style = MaterialTheme.typography.bodyMedium)
+                        Hint(
+                            if (band.interiorCapacity < DEFAULT_BAND_COUNT) {
+                                "$count added · lens fits only ${band.interiorCapacity} here"
+                            } else {
+                                "$count added between the edges"
+                            },
+                        )
+                    }
+                    Stepper(
+                        value = count,
+                        range = 0..band.interiorCapacity,
+                        accentColor = accentColor,
+                        onValueChange = { onFocusChange(focus.copy(bands = withBandCount(focus.bands, index, it))) },
+                        modifier = Modifier,
+                        compact = true,
+                    )
+                }
+            }
+        }
     }
 
     ValueChips(values.map { diopterLabel(it) }, accentColor)
-    Hint("0 D = infinity · ${"%.2f".format(maxD)} D = closest focus")
+    Hint(
+        "0 D = infinity · ${"%.2f".format(maxD)} D = closest focus. The band edges — ∞, 100 m, " +
+            "10 m, 1 m and closest focus — are always captured; each count adds that many values " +
+            "between one pair of edges. Bands are spaced geometrically in distance; 100 m - ∞ is " +
+            "linear in diopters, as distance has no finite end there.",
+    )
+}
+
+/** Replaces one band's count positionally, matching the order [FocusBandCounts.asList] returns. */
+private fun withBandCount(bands: FocusBandCounts, index: Int, value: Int): FocusBandCounts = when (index) {
+    0 -> bands.copy(infinity = value)
+    1 -> bands.copy(far = value)
+    2 -> bands.copy(mid = value)
+    else -> bands.copy(near = value)
 }
 
 /** Two selectable cards, with the storage cost of the choice made visible before the sweep. */
@@ -513,26 +575,23 @@ fun DownscaleEditor(
     val outW = if (draft.downscale <= 1) fullWidth else fullWidth / draft.downscale
     val outH = if (draft.downscale <= 1) fullHeight else fullHeight / draft.downscale
     val megapixels = outW.toLong() * outH / 1_000_000.0
+
+    // Everything below the slider is deliberately fixed in line count. The sheet is anchored to
+    // the bottom of the screen, so text that grew or shrank with the selected factor moved the
+    // slider vertically under the user's finger. The source resolution lives in the "Offered"
+    // line above instead of switching this line between two different phrasings.
     Text(
-        if (draft.downscale == 1) {
-            "Saves at full resolution: $fullWidth × $fullHeight (${"%.1f".format(megapixels)} MP)"
-        } else {
-            "$fullWidth × $fullHeight → $outW × $outH (${"%.1f".format(megapixels)} MP)"
-        },
+        "Output: $outW × $outH (${"%.1f".format(megapixels)} MP)",
         style = MaterialTheme.typography.bodyMedium,
     )
     Hint(
-        if (draft.downscale == 1) {
-            "Every sensor pixel is saved as captured."
-        } else {
-            "Each output pixel is the average of a ${draft.downscale}x${draft.downscale} block, which also " +
-                "lowers noise. Averaging is on gamma-encoded values, so it is not radiometrically linear."
-        },
+        "Downscaling averages each block of sensor pixels, which also lowers noise. Averaging is " +
+            "on gamma-encoded values, so it is not radiometrically linear.",
     )
-    if (draft.downscale > 1 && draft.outputFormat == OutputFormat.JPEG) {
+    if (draft.outputFormat == OutputFormat.JPEG) {
         Hint(
-            "At 1x a single JPEG frame is written straight from the camera; downscaling means it is " +
-                "decoded and re-encoded, costing one generation of compression.",
+            "With JPEG, 1x writes the camera's frame untouched; any other factor decodes and " +
+                "re-encodes it, costing one generation of compression.",
         )
     }
 }
