@@ -1,0 +1,2 @@
+# The Windows-side scripts (scripts/windows/*.py) use only the Python 3.10+ standard library.
+# Nothing to install. (adb must be on PATH, in ANDROID_HOME/platform-tools, or passed via --adb.)

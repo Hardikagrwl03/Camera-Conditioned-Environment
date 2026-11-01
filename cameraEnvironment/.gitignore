@@ -1,0 +1,25 @@
+# Data: never commit captures, sweeps or fitted artefacts
+framesweeps/
+rawframes/
+calibration/
+outputs/
+device/
+*.dng
+*.DNG
+*.npy
+*.tiff
+*.tif
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
