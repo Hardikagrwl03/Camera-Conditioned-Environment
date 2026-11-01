@@ -158,6 +158,16 @@ def load_scene(raw_dir, sensor: Optional[SensorModel] = None, iso0: float = 50.0
     group = [e for e in raws if e.iso == ref.iso and e.exposure_s == ref.exposure_s]
     group.sort(key=lambda e: e.frame)
     frames = [load_dng(man.path(e.file), sidecar=man.sidecar(e), prefer=prefer) for e in group]
+    if ref.iso is None or ref.exposure_s is None:
+        # settings unknown from the manifest/filename: use the DNGs' own EXIF so frames taken at
+        # different settings are never averaged as one burst
+        best = min(frames, key=lambda f: (f.iso, -f.exposure_s))
+        same = [f for f in frames if abs(f.iso - best.iso) < 1e-6
+                and abs(f.exposure_s - best.exposure_s) <= 5e-3 * best.exposure_s]
+        if len(same) < len(frames):
+            warnings.warn(f"{len(frames) - len(same)} DNG(s) in {raw_dir} are not at ISO {best.iso:g} / "
+                          f"{best.exposure_s * 1e3:g} ms and were ignored as burst frames")
+        frames = same
     scene = merge_burst(frames)
     brks = man.by_tag("brk")
     if brks:

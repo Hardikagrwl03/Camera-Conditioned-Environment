@@ -11,6 +11,7 @@ Schema (all keys of ``result`` are CaptureResult key names, e.g. ``android.senso
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,8 @@ K_TONEMAP_MODE = "android.tonemap.mode"
 K_TONEMAP_CURVE = "android.tonemap.curve"
 K_BOOST = "android.control.postRawSensitivityBoost"
 K_SHADING_MAP = "android.statistics.lensShadingCorrectionMap"
+
+_NAME = re.compile(r"iso(\d+)_exp(\d+)us_fd(\d+)p(\d+)D", re.IGNORECASE)
 
 
 def read_json(path) -> dict:
@@ -102,10 +105,18 @@ class CaptureManifest:
         p = root / "capture_manifest.json"
         if p.exists():
             return cls(root, read_json(p))
-        # No manifest: treat every DNG as a plain 'raw' frame.
+        # No manifest: treat every DNG as a plain 'raw' frame. ISO / exposure / focus are parsed
+        # from Lattice-style names (iso0050_exp100000us_fd1p00D...) when possible, so DNGs taken at
+        # different settings are not averaged together as one burst; frames whose name carries
+        # no settings get None and are disambiguated later from the DNG's own EXIF.
         entries = []
-        for i, f in enumerate(sorted(root.glob("*.dng"))):
+        dngs = sorted(f for f in root.iterdir() if f.is_file() and f.suffix.lower() == ".dng")
+        for i, f in enumerate(dngs):
+            m = _NAME.search(f.name)
             entries.append({"file": f.name, "tag": "raw", "frame": i,
+                            "iso": float(m.group(1)) if m else None,
+                            "exposureNs": int(m.group(2)) * 1000 if m else None,
+                            "focusD": float(f"{m.group(3)}.{m.group(4)}") if m else None,
                             "json": f.with_suffix(".json").name if f.with_suffix(".json").exists() else None})
         return cls(root, {"mode": "scene", "entries": entries})
 
